@@ -1,0 +1,17 @@
+dependencies {
+    // Pipeline BOM (includes Quarkus BOM transitively)
+    implementation platform("ai.pipestream:pipeline-bom:${-> rootProject.version}")
+
+    // Quarkus deployment dependencies - must match runtime's Quarkus dependencies
+    implementation 'io.quarkus:quarkus-arc-deployment'
+    implementation 'io.quarkus:quarkus-messaging-kafka-deployment'
+
+    // Jandex
+    implementation 'io.smallrye:jandex'
+
+    // Runtime module (for types)
+    implementation project(':libraries:pipeline-protobuf-kafka-connector:runtime')
+    
+    // ADD THIS: Needed so the build step can resolve ApicurioConfigurator class
+    implementation project(':libraries:pipeline-commons')
+}
