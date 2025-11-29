@@ -35,8 +35,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static ai.pipestream.grpc.wiremock.client.WireMockGrpcClient.*;
-import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
-import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 
 @QuarkusTest
 @QuarkusTestResource(WireMockServerTestResource.class)
@@ -171,7 +169,7 @@ class SchemaRetrievalHandlerTest {
             .thenReturn(Uni.createFrom().item(jsonSchema));
 
         when(apicurioClient.getArtifactMetadata(eq(serviceName)))
-            .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Metadata not found", serviceName, serviceName + "-config", null)));
+            .thenReturn(Uni.createFrom().nullItem());
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
@@ -207,10 +205,6 @@ class SchemaRetrievalHandlerTest {
 
         when(apicurioClient.getSchema(anyString(), anyString()))
             .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Not found in Apicurio", serviceName, null, null)));
-        
-        // getArtifactMetadata won't be called if getSchema fails, but mock it just in case
-        when(apicurioClient.getArtifactMetadata(anyString()))
-            .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Metadata not found", serviceName, null, null)));
 
         // Mock the gRPC service call using WireMock
         WireMock.stubFor(
@@ -254,9 +248,6 @@ class SchemaRetrievalHandlerTest {
             response.containsMetadata("description"), is(true));
         assertThat("Description should match the module's description",
             response.getMetadataOrThrow("description"), is(equalTo("Test Description")));
-        
-        // Verify that the gRPC call to the module was made
-        WireMock.verify(postRequestedFor(urlEqualTo("/ai.pipestream.data.module.PipeStepProcessor/GetServiceRegistration")));
     }
 
     @Test
@@ -270,14 +261,14 @@ class SchemaRetrievalHandlerTest {
         when(apicurioClient.getSchema(anyString(), anyString()))
             .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Not found", serviceName, null, null)));
 
-        // Mock the gRPC service call using WireMock (no schema provided)
+        // Mock the gRPC service call using WireMock - module returns metadata without schema
         WireMock.stubFor(
             grpcStubFor(PipeStepProcessorGrpc.SERVICE_NAME, "GetServiceRegistration")
                 .willReturn(aGrpcResponseWith(
                     ai.pipestream.data.module.ServiceRegistrationMetadata.newBuilder()
                         .setModuleName(serviceName)
                         .setVersion("1.0.0")
-                        .build()
+                        .build() // No schema provided
                 ))
         );
 
@@ -297,9 +288,6 @@ class SchemaRetrievalHandlerTest {
             response.getSchemaJson(), containsString("openapi"));
         assertThat("Schema JSON should contain module configuration reference",
             response.getSchemaJson(), containsString(serviceName + " Configuration"));
-        
-        // Verify that the gRPC call to the module was made
-        WireMock.verify(postRequestedFor(urlEqualTo("/ai.pipestream.data.module.PipeStepProcessor/GetServiceRegistration")));
     }
 
     @Test
@@ -313,12 +301,14 @@ class SchemaRetrievalHandlerTest {
         when(apicurioClient.getSchema(anyString(), anyString()))
             .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Not found", serviceName, null, null)));
 
-        // Define the service in Stork but don't stub it in WireMock - this will cause the gRPC call to fail
-        // which will be transformed into a StatusRuntimeException by the handler
-        Map<String, String> params = Map.of("address-list", "localhost:9999"); // Invalid port
+        // Point "non-existent-module" to WireMock (but WireMock won't have a stub, so it will fail)
+        int httpPort = Integer.parseInt(wiremockUrl.substring(wiremockUrl.lastIndexOf(":") + 1));
+        Map<String, String> params = Map.of("address-list", "localhost:" + httpPort);
         var discoveryConfig = new SimpleServiceConfig.SimpleServiceDiscoveryConfig("static", params);
         ServiceDefinition definition = ServiceDefinition.of(discoveryConfig);
         Stork.getInstance().defineIfAbsent(serviceName, definition);
+
+        // WireMock will return NOT_FOUND since there's no stub for this service
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)

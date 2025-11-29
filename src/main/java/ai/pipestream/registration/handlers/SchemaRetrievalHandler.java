@@ -63,19 +63,56 @@ public class SchemaRetrievalHandler {
                             (error.getCause() != null && error.getCause() instanceof ApicurioRegistryException)) {
                             LOG.warnf(error, "Failed to get schema from Apicurio for %s:%s, falling back to module", 
                                 serviceName, version);
-                            return getSchemaFromModule(serviceName);
+                            return getSchemaFromModule(serviceName)
+                                .onFailure().transform(moduleError -> {
+                                    LOG.errorf(moduleError, "Module fallback failed for %s (error type: %s), transforming to StatusRuntimeException", 
+                                        serviceName, moduleError.getClass().getName());
+                                    if (moduleError instanceof StatusRuntimeException) {
+                                        return moduleError;
+                                    }
+                                    return new StatusRuntimeException(
+                                        Status.NOT_FOUND.withDescription(
+                                            "Module schema not found: " + serviceName + 
+                                            ". Module may not be running or registered."
+                                        ).withCause(moduleError)
+                                    );
+                                });
                         }
                         // For other errors, also try module fallback
                         LOG.warnf(error, "Unexpected error from Apicurio for %s:%s, trying module fallback", 
                             serviceName, version);
-                        return getSchemaFromModule(serviceName);
+                        return getSchemaFromModule(serviceName)
+                            .onFailure().transform(moduleError -> {
+                                LOG.errorf(moduleError, "Module fallback failed for %s (error type: %s), transforming to StatusRuntimeException", 
+                                    serviceName, moduleError.getClass().getName());
+                                if (moduleError instanceof StatusRuntimeException) {
+                                    return moduleError;
+                                }
+                                return new StatusRuntimeException(
+                                    Status.NOT_FOUND.withDescription(
+                                        "Module schema not found: " + serviceName + 
+                                        ". Module may not be running or registered."
+                                    ).withCause(moduleError)
+                                );
+                            });
                     });
             })
-            .onFailure(StatusRuntimeException.class).recoverWithUni(error -> {
-                // Propagate StatusRuntimeException from module fallback (e.g., NOT_FOUND)
-                return Uni.createFrom().failure(error);
-            })
             .onFailure().recoverWithUni(error -> {
+                // Check if it's a StatusRuntimeException (from module fallback) or if it's wrapped
+                Throwable cause = error;
+                while (cause != null && !(cause instanceof StatusRuntimeException)) {
+                    if (cause.getCause() != null && cause.getCause() != cause) {
+                        cause = cause.getCause();
+                    } else {
+                        break;
+                    }
+                }
+                
+                if (cause instanceof StatusRuntimeException) {
+                    // Propagate StatusRuntimeException from module fallback (e.g., NOT_FOUND)
+                    return Uni.createFrom().failure(cause);
+                }
+                
                 // Catch any other unexpected failures (from database lookup - shouldn't happen)
                 LOG.errorf(error, "Unexpected error retrieving schema for %s:%s", serviceName, version);
                 return Uni.createFrom().failure(error);
@@ -132,7 +169,6 @@ public class SchemaRetrievalHandler {
         String versionToFetch = version != null ? version : "latest";
         
         return apicurioClient.getSchema(serviceName, versionToFetch)
-            .onFailure(ApicurioRegistryException.class).transform(failure -> failure) // Preserve ApicurioRegistryException
             .flatMap(schemaContent -> {
                 // Get artifact metadata for additional information
                 // If metadata retrieval fails, we still have the schema content, so we can continue
@@ -219,12 +255,18 @@ public class SchemaRetrievalHandler {
             )
             .map(metadata -> buildResponseFromModuleMetadata(serviceName, metadata))
             .onFailure().transform(error -> {
-                LOG.errorf(error, "Failed to get schema from module %s", serviceName);
+                LOG.errorf(error, "Failed to get schema from module %s (error type: %s)", 
+                    serviceName, error.getClass().getName());
+                // Preserve StatusRuntimeException if already one
+                if (error instanceof StatusRuntimeException) {
+                    return error;
+                }
+                // Transform other errors to StatusRuntimeException
                 return new StatusRuntimeException(
                     Status.NOT_FOUND.withDescription(
                         "Module schema not found: " + serviceName + 
                         ". Module may not be running or registered."
-                    )
+                    ).withCause(error)
                 );
             });
     }
