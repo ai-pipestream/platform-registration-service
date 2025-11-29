@@ -257,9 +257,20 @@ public class SchemaRetrievalHandler {
             .onFailure().transform(error -> {
                 LOG.errorf(error, "Failed to get schema from module %s (error type: %s)", 
                     serviceName, error.getClass().getName());
-                // Preserve StatusRuntimeException if already one
+                // Preserve StatusRuntimeException with NOT_FOUND status
                 if (error instanceof StatusRuntimeException) {
-                    return error;
+                    StatusRuntimeException sre = (StatusRuntimeException) error;
+                    // If it's already NOT_FOUND, preserve it
+                    if (sre.getStatus().getCode() == Status.NOT_FOUND.getCode()) {
+                        return error;
+                    }
+                    // Otherwise, transform to NOT_FOUND (e.g., UNIMPLEMENTED from WireMock means service not found)
+                    return new StatusRuntimeException(
+                        Status.NOT_FOUND.withDescription(
+                            "Module schema not found: " + serviceName + 
+                            ". Module may not be running or registered."
+                        ).withCause(error)
+                    );
                 }
                 // Transform other errors to StatusRuntimeException
                 return new StatusRuntimeException(
