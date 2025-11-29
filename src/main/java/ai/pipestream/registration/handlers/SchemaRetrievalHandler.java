@@ -7,6 +7,7 @@ import ai.pipestream.platform.registration.GetModuleSchemaRequest;
 import ai.pipestream.platform.registration.ModuleSchemaResponse;
 import ai.pipestream.registration.entity.ConfigSchema;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
+import ai.pipestream.registration.repository.ApicurioRegistryException;
 import ai.pipestream.registration.repository.ModuleRepository;
 import com.google.protobuf.Timestamp;
 import io.apicurio.registry.rest.client.models.ArtifactMetaData;
@@ -51,17 +52,33 @@ public class SchemaRetrievalHandler {
         
         // Try to get schema from database first (system of record)
         return getSchemaFromDatabase(serviceName, version)
-            .onItem().ifNotNull().transformToUni(this::buildResponseFromDatabase
-            )
+            .onItem().ifNotNull().transformToUni(this::buildResponseFromDatabase)
             .onItem().ifNull().switchTo(() -> {
                 LOG.debugf("Schema not found in database for %s:%s, trying Apicurio", 
                     serviceName, version);
-                return getSchemaFromApicurio(serviceName, version);
+                return getSchemaFromApicurio(serviceName, version)
+                    .onFailure().recoverWithUni(error -> {
+                        // Check if it's an ApicurioRegistryException or if the cause is one
+                        if (error instanceof ApicurioRegistryException || 
+                            (error.getCause() != null && error.getCause() instanceof ApicurioRegistryException)) {
+                            LOG.warnf(error, "Failed to get schema from Apicurio for %s:%s, falling back to module", 
+                                serviceName, version);
+                            return getSchemaFromModule(serviceName);
+                        }
+                        // For other errors, also try module fallback
+                        LOG.warnf(error, "Unexpected error from Apicurio for %s:%s, trying module fallback", 
+                            serviceName, version);
+                        return getSchemaFromModule(serviceName);
+                    });
+            })
+            .onFailure(StatusRuntimeException.class).recoverWithUni(error -> {
+                // Propagate StatusRuntimeException from module fallback (e.g., NOT_FOUND)
+                return Uni.createFrom().failure(error);
             })
             .onFailure().recoverWithUni(error -> {
-                LOG.warnf(error, "Failed to get schema from Apicurio for %s:%s, falling back to module", 
-                    serviceName, version);
-                return getSchemaFromModule(serviceName);
+                // Catch any other unexpected failures (from database lookup - shouldn't happen)
+                LOG.errorf(error, "Unexpected error retrieving schema for %s:%s", serviceName, version);
+                return Uni.createFrom().failure(error);
             });
     }
     
@@ -115,15 +132,35 @@ public class SchemaRetrievalHandler {
         String versionToFetch = version != null ? version : "latest";
         
         return apicurioClient.getSchema(serviceName, versionToFetch)
+            .onFailure(ApicurioRegistryException.class).transform(failure -> failure) // Preserve ApicurioRegistryException
             .flatMap(schemaContent -> {
                 // Get artifact metadata for additional information
+                // If metadata retrieval fails, we still have the schema content, so we can continue
                 return apicurioClient.getArtifactMetadata(serviceName)
                     .map(metadata -> buildResponseFromApicurio(
                         serviceName, 
                         schemaContent, 
                         versionToFetch,
                         metadata
-                    ));
+                    ))
+                    .onFailure(ApicurioRegistryException.class).recoverWithItem(error -> {
+                        // If metadata fails, build response without metadata
+                        LOG.debugf(error, "Failed to get metadata for %s, using schema without metadata", serviceName);
+                        return buildResponseFromApicurio(serviceName, schemaContent, versionToFetch, null);
+                    });
+            })
+            .onFailure().transform(failure -> {
+                // Ensure ApicurioRegistryException is properly propagated
+                if (failure instanceof ApicurioRegistryException) {
+                    return failure;
+                }
+                // Wrap unexpected failures
+                return new ApicurioRegistryException(
+                    String.format("Failed to get schema from Apicurio for %s", serviceName),
+                    serviceName,
+                    null,
+                    failure
+                );
             });
     }
     

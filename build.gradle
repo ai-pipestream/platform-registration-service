@@ -71,6 +71,11 @@ dependencies {
     testImplementation 'io.quarkus:quarkus-test-vertx'
     testImplementation 'org.testcontainers:mysql'
     testImplementation libs.rest.assured
+    testImplementation "ai.pipestream:wiremock-grpc-client"
+    testImplementation libs.wiremock.standalone
+    testImplementation libs.wiremock.grpc.extension.standalone
+    // Ensure grpc-stubs is available in test classloader
+    testImplementation 'ai.pipestream:grpc-stubs'
     runtimeOnly libs.quarkus.logging.manager
 }
 

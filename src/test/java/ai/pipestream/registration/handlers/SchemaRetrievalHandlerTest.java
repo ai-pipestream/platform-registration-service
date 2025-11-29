@@ -1,34 +1,45 @@
 package ai.pipestream.registration.handlers;
 
-import ai.pipestream.data.module.RegistrationRequest;
-import ai.pipestream.data.module.ServiceRegistrationMetadata;
-import ai.pipestream.dynamic.grpc.client.DynamicGrpcClientFactory;
+import ai.pipestream.data.module.PipeStepProcessorGrpc;
+import ai.pipestream.grpc.wiremock.client.WireMockServerTestResource;
 import ai.pipestream.platform.registration.GetModuleSchemaRequest;
 import ai.pipestream.platform.registration.ModuleSchemaResponse;
 import ai.pipestream.registration.entity.ConfigSchema;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
+import ai.pipestream.registration.repository.ApicurioRegistryException;
 import ai.pipestream.registration.repository.ModuleRepository;
+import com.github.tomakehurst.wiremock.client.WireMock;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.quarkus.test.InjectMock;
+import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.stork.Stork;
+import io.smallrye.stork.api.ServiceDefinition;
+import io.smallrye.stork.integration.DefaultStorkInfrastructure;
+import io.smallrye.stork.spi.config.SimpleServiceConfig;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static ai.pipestream.grpc.wiremock.client.WireMockGrpcClient.*;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 
 @QuarkusTest
+@QuarkusTestResource(WireMockServerTestResource.class)
 class SchemaRetrievalHandlerTest {
 
     @Inject
@@ -40,12 +51,29 @@ class SchemaRetrievalHandlerTest {
     @InjectMock
     ModuleRepository moduleRepository;
 
-    @InjectMock
-    DynamicGrpcClientFactory grpcClientFactory;
+    @ConfigProperty(name = "wiremock.url")
+    String wiremockUrl;
 
     @BeforeEach
     void setUp() {
-        Mockito.reset(apicurioClient, moduleRepository, grpcClientFactory);
+        Mockito.reset(apicurioClient, moduleRepository);
+        
+        // Configure WireMock
+        int httpPort = Integer.parseInt(wiremockUrl.substring(wiremockUrl.lastIndexOf(":") + 1));
+        WireMock.configureFor("localhost", httpPort);
+        WireMock.reset();
+        
+        // Initialize Stork to point services to WireMock
+        if (Stork.getInstance() != null) {
+            Stork.shutdown();
+        }
+        Stork.initialize(new DefaultStorkInfrastructure());
+        
+        // Point "test-module" to WireMock
+        Map<String, String> params = Map.of("address-list", "localhost:" + httpPort);
+        var discoveryConfig = new SimpleServiceConfig.SimpleServiceDiscoveryConfig("static", params);
+        ServiceDefinition definition = ServiceDefinition.of(discoveryConfig);
+        Stork.getInstance().defineIfAbsent("test-module", definition);
     }
 
     @Test
@@ -95,7 +123,7 @@ class SchemaRetrievalHandlerTest {
             response.hasUpdatedAt(), is(true));
 
         verify(moduleRepository).findSchemaById(anyString());
-        verifyNoInteractions(apicurioClient, grpcClientFactory);
+        verifyNoInteractions(apicurioClient);
     }
 
     @Test
@@ -126,7 +154,7 @@ class SchemaRetrievalHandlerTest {
             response.getSchemaJson(), is(equalTo(jsonSchema)));
 
         verify(moduleRepository).findLatestSchemaByServiceName(eq(serviceName));
-        verifyNoInteractions(apicurioClient, grpcClientFactory);
+        verifyNoInteractions(apicurioClient);
     }
 
     @Test
@@ -143,7 +171,7 @@ class SchemaRetrievalHandlerTest {
             .thenReturn(Uni.createFrom().item(jsonSchema));
 
         when(apicurioClient.getArtifactMetadata(eq(serviceName)))
-            .thenReturn(Uni.createFrom().nullItem());
+            .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Metadata not found", serviceName, serviceName + "-config", null)));
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
@@ -174,26 +202,29 @@ class SchemaRetrievalHandlerTest {
         String serviceName = "test-module";
         String jsonSchema = "{\"type\": \"object\"}";
 
-        ServiceRegistrationMetadata metadata = ServiceRegistrationMetadata.newBuilder()
-            .setModuleName(serviceName)
-            .setVersion("1.0.0")
-            .setJsonConfigSchema(jsonSchema)
-            .setDisplayName("Test Module")
-            .setDescription("Test Description")
-            .build();
-
         when(moduleRepository.findLatestSchemaByServiceName(eq(serviceName)))
             .thenReturn(Uni.createFrom().nullItem());
 
         when(apicurioClient.getSchema(anyString(), anyString()))
-            .thenReturn(Uni.createFrom().failure(new RuntimeException("Not found in Apicurio")));
+            .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Not found in Apicurio", serviceName, null, null)));
+        
+        // getArtifactMetadata won't be called if getSchema fails, but mock it just in case
+        when(apicurioClient.getArtifactMetadata(anyString()))
+            .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Metadata not found", serviceName, null, null)));
 
-        // Mock the gRPC client chain
-        var mockStub = mock(ai.pipestream.data.module.MutinyPipeStepProcessorGrpc.MutinyPipeStepProcessorStub.class);
-        when(grpcClientFactory.getMutinyClientForService(eq(serviceName)))
-            .thenReturn(Uni.createFrom().item(mockStub));
-        when(mockStub.getServiceRegistration(any(RegistrationRequest.class)))
-            .thenReturn(Uni.createFrom().item(metadata));
+        // Mock the gRPC service call using WireMock
+        WireMock.stubFor(
+            grpcStubFor(PipeStepProcessorGrpc.SERVICE_NAME, "GetServiceRegistration")
+                .willReturn(aGrpcResponseWith(
+                    ai.pipestream.data.module.ServiceRegistrationMetadata.newBuilder()
+                        .setModuleName(serviceName)
+                        .setVersion("1.0.0")
+                        .setJsonConfigSchema(jsonSchema)
+                        .setDisplayName("Test Module")
+                        .setDescription("Test Description")
+                        .build()
+                ))
+        );
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
@@ -223,6 +254,9 @@ class SchemaRetrievalHandlerTest {
             response.containsMetadata("description"), is(true));
         assertThat("Description should match the module's description",
             response.getMetadataOrThrow("description"), is(equalTo("Test Description")));
+        
+        // Verify that the gRPC call to the module was made
+        WireMock.verify(postRequestedFor(urlEqualTo("/ai.pipestream.data.module.PipeStepProcessor/GetServiceRegistration")));
     }
 
     @Test
@@ -230,22 +264,22 @@ class SchemaRetrievalHandlerTest {
         // Arrange
         String serviceName = "test-module";
 
-        ServiceRegistrationMetadata metadata = ServiceRegistrationMetadata.newBuilder()
-            .setModuleName(serviceName)
-            .setVersion("1.0.0")
-            .build(); // No schema provided
-
         when(moduleRepository.findLatestSchemaByServiceName(eq(serviceName)))
             .thenReturn(Uni.createFrom().nullItem());
 
         when(apicurioClient.getSchema(anyString(), anyString()))
-            .thenReturn(Uni.createFrom().failure(new RuntimeException("Not found")));
+            .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Not found", serviceName, null, null)));
 
-        var mockStub = mock(ai.pipestream.data.module.MutinyPipeStepProcessorGrpc.MutinyPipeStepProcessorStub.class);
-        when(grpcClientFactory.getMutinyClientForService(eq(serviceName)))
-            .thenReturn(Uni.createFrom().item(mockStub));
-        when(mockStub.getServiceRegistration(any(RegistrationRequest.class)))
-            .thenReturn(Uni.createFrom().item(metadata));
+        // Mock the gRPC service call using WireMock (no schema provided)
+        WireMock.stubFor(
+            grpcStubFor(PipeStepProcessorGrpc.SERVICE_NAME, "GetServiceRegistration")
+                .willReturn(aGrpcResponseWith(
+                    ai.pipestream.data.module.ServiceRegistrationMetadata.newBuilder()
+                        .setModuleName(serviceName)
+                        .setVersion("1.0.0")
+                        .build()
+                ))
+        );
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
@@ -263,6 +297,9 @@ class SchemaRetrievalHandlerTest {
             response.getSchemaJson(), containsString("openapi"));
         assertThat("Schema JSON should contain module configuration reference",
             response.getSchemaJson(), containsString(serviceName + " Configuration"));
+        
+        // Verify that the gRPC call to the module was made
+        WireMock.verify(postRequestedFor(urlEqualTo("/ai.pipestream.data.module.PipeStepProcessor/GetServiceRegistration")));
     }
 
     @Test
@@ -274,10 +311,14 @@ class SchemaRetrievalHandlerTest {
             .thenReturn(Uni.createFrom().nullItem());
 
         when(apicurioClient.getSchema(anyString(), anyString()))
-            .thenReturn(Uni.createFrom().failure(new RuntimeException("Not found")));
+            .thenReturn(Uni.createFrom().failure(new ApicurioRegistryException("Not found", serviceName, null, null)));
 
-        when(grpcClientFactory.getMutinyClientForService(eq(serviceName)))
-            .thenReturn(Uni.createFrom().failure(new RuntimeException("Service not found")));
+        // Define the service in Stork but don't stub it in WireMock - this will cause the gRPC call to fail
+        // which will be transformed into a StatusRuntimeException by the handler
+        Map<String, String> params = Map.of("address-list", "localhost:9999"); // Invalid port
+        var discoveryConfig = new SimpleServiceConfig.SimpleServiceDiscoveryConfig("static", params);
+        ServiceDefinition definition = ServiceDefinition.of(discoveryConfig);
+        Stork.getInstance().defineIfAbsent(serviceName, definition);
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
