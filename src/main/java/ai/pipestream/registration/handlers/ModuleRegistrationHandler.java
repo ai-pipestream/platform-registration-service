@@ -101,7 +101,7 @@ public class ModuleRegistrationHandler {
     }
     
     private Multi<RegistrationEvent> continueRegistrationFlow(ModuleRegistrationRequest request, String serviceId) {
-        return healthChecker.waitForHealthy(serviceId)
+        return healthChecker.waitForHealthy(request.getModuleName(), serviceId)
             .onItem().transformToMulti(healthy -> {
                 if (!healthy) {
                     return rollbackConsulRegistration(serviceId)

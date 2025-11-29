@@ -70,7 +70,7 @@ services:
   # Apicurio Registry for protobuf schema management (in-memory for tests)
   apicurio-registry-test:
     container_name: kafka-test-apicurio
-    image: apicurio/apicurio-registry:3.1.2
+    image: apicurio/apicurio-registry:3.1.4
     networks:
       - kafka-test-network
     ports:

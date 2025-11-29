@@ -13,7 +13,7 @@ dependencyResolutionManagement {
         libs {
             // Import version catalog from published BOM
             // Available on both private Reposilite and public GitHub Packages
-            from("ai.pipestream:pipeline-bom-catalog:0.2.11-SNAPSHOT")
+            from("ai.pipestream:pipeline-bom-catalog:0.2.12-SNAPSHOT")
         }
     }
 

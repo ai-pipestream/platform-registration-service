@@ -21,7 +21,7 @@ scmVersion {
     }
 }
 
-def pipelineBomVersion = findProperty('pipelineBomVersion') ?: '0.2.11-SNAPSHOT'
+def pipelineBomVersion = findProperty('pipelineBomVersion') ?: '0.2.12-SNAPSHOT'
 
 dependencies {
     implementation 'io.quarkus:quarkus-container-image-docker'
@@ -41,14 +41,12 @@ dependencies {
     implementation 'io.quarkus:quarkus-micrometer-registry-prometheus'
     implementation 'io.quarkus:quarkus-micrometer-registry-prometheus'
     
-    // Pipeline Kafka Extension (Zero-Config)
-    implementation 'ai.pipestream:pipeline-protobuf-kafka-connector:0.2.11-SNAPSHOT'
+    // Quarkus Apicurio Registry Protobuf Extension (Zero-Config)
+    // Auto-detects Protobuf message types and configures serializers/deserializers
+    implementation 'ai.pipestream:quarkus-apicurio-registry-protobuf:0.1.0-SNAPSHOT'
 
     // Reactive Messaging for Kafka (provides @Channel, @Incoming, MutinyEmitter)
     implementation 'io.quarkus:quarkus-messaging-kafka'
-
-    // Pipeline API (provides @ProtobufChannel, @ProtobufIncoming annotations)
-    implementation 'ai.pipestream:pipeline-api:0.2.11-SNAPSHOT'
 
     // Consul integration
     implementation 'io.smallrye.reactive:smallrye-mutiny-vertx-consul-client'
@@ -62,8 +60,8 @@ dependencies {
     // Pipestream libraries - versions managed entirely by the BOM/catalog
     implementation libs.pipestream.compose.devservices
     implementation libs.pipestream.compose.devservices
-    implementation 'ai.pipestream:grpc-stubs:0.2.11-SNAPSHOT'
-    implementation 'ai.pipestream:pipeline-commons:0.2.11-SNAPSHOT'
+    implementation 'ai.pipestream:grpc-stubs'
+    implementation 'ai.pipestream:pipeline-commons'
     implementation libs.pipestream.dynamic.grpc
 
 

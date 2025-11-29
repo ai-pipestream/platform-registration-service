@@ -60,9 +60,9 @@ public class ServiceRegistrationHandler {
                     
                     emitter.emit(createEvent(EventType.CONSUL_REGISTERED, "Service registered with Consul", serviceId));
                     emitter.emit(createEvent(EventType.HEALTH_CHECK_CONFIGURED, "Health check configured", null));
-                    
+
                     // Wait for health check
-                    return healthChecker.waitForHealthy(serviceId)
+                    return healthChecker.waitForHealthy(request.getServiceName(), serviceId)
                         .onItem().invoke(healthy -> {
                             if (healthy) {
                                 emitter.emit(createEvent(EventType.CONSUL_HEALTHY, "Service reported healthy by Consul", null));

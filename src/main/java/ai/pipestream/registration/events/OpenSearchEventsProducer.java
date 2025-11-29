@@ -1,6 +1,5 @@
 package ai.pipestream.registration.events;
 
-import ai.pipestream.api.annotation.ProtobufChannel;
 import ai.pipestream.platform.registration.ModuleRegistered;
 import ai.pipestream.platform.registration.ServiceRegistered;
 import ai.pipestream.platform.registration.ModuleUnregistered;
@@ -14,28 +13,27 @@ import com.google.protobuf.Timestamp;
 /**
  * Produces events to Kafka for OpenSearch indexing.
  * Only emits on successful registration/unregistration.
- * Key: UUID
- * Value: Protobuf events
+ * Key: UUID (auto-configured by quarkus-apicurio-registry-protobuf extension)
+ * Value: Protobuf events (auto-serialized by extension)
  */
 @ApplicationScoped
 public class OpenSearchEventsProducer {
 
     private static final Logger LOG = Logger.getLogger(OpenSearchEventsProducer.class);
 
+    // The quarkus-apicurio-registry-protobuf extension auto-detects Protobuf types
+    // and configures ProtobufKafkaSerializer + UUIDSerializer automatically
+
     @Channel("opensearch-service-registered-events-producer")
-    @ProtobufChannel("opensearch-service-registered-events-producer")
     MutinyEmitter<ServiceRegistered> serviceRegisteredEmitter;
 
     @Channel("opensearch-service-unregistered-events-producer")
-    @ProtobufChannel("opensearch-service-unregistered-events-producer")
     MutinyEmitter<ServiceUnregistered> serviceUnregisteredEmitter;
 
     @Channel("opensearch-module-registered-events-producer")
-    @ProtobufChannel("opensearch-module-registered-events-producer")
     MutinyEmitter<ModuleRegistered> moduleRegisteredEmitter;
 
     @Channel("opensearch-module-unregistered-events-producer")
-    @ProtobufChannel("opensearch-module-unregistered-events-producer")
     MutinyEmitter<ModuleUnregistered> moduleUnregisteredEmitter;
 
     public void emitServiceRegistered(String serviceId, String serviceName, String host, int port, String version) {
