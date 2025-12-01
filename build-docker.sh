@@ -6,119 +6,151 @@ set -e
 # This script provides easy commands for building Docker images to different registries
 #
 # Usage:
-#   ./build-docker.sh local              # Build to local Docker (no push)
-#   ./build-docker.sh localhost          # Push to localhost:5000 registry
-#   ./build-docker.sh ghcr               # Push to GitHub Container Registry
-#   ./build-docker.sh dockerhub          # Push to Docker Hub
-#   ./build-docker.sh native             # Build native image (small, fast startup)
-#   ./build-docker.sh multi-arch <profile>  # Build for AMD64 + ARM64
+#   ./build-docker.sh <registry> [native|multi-arch]
+#
+# Registry options:
+#   local              # Build to local Docker (no push)
+#   localhost          # Push to localhost:5000 registry
+#   ghcr               # Push to GitHub Container Registry
+#   dockerhub          # Push to Docker Hub
+#
+# Build type options (optional):
+#   native             # Build native image (small, fast startup)
+#   multi-arch         # Build for AMD64 + ARM64
+#
+# Examples:
+#   ./build-docker.sh local              # Local JVM build
+#   ./build-docker.sh local native       # Local native build
+#   ./build-docker.sh ghcr multi-arch    # Multi-arch to GHCR
+#   ./build-docker.sh localhost native   # Native to localhost:5000
 
-PROFILE="${1:-local}"
+REGISTRY="${1:-local}"
+BUILD_TYPE="${2:-jvm}"
 
-echo "Building platform-registration-service with profile: $PROFILE"
+# Parse build type
+NATIVE=false
+MULTIARCH=false
 
-case "$PROFILE" in
-  local)
-    echo "Building to local Docker (no registry push)..."
-    ./gradlew clean build -x test \
-      -Dquarkus.profile=local \
-      -Dquarkus.container-image.build=true
-    echo "✓ Image built: ai-pipestream/platform-registration-service:latest"
+if [[ "$BUILD_TYPE" == "native" ]]; then
+  NATIVE=true
+elif [[ "$BUILD_TYPE" == "multi-arch" ]]; then
+  MULTIARCH=true
+elif [[ "$BUILD_TYPE" != "jvm" && -n "$BUILD_TYPE" ]]; then
+  echo "Unknown build type: $BUILD_TYPE"
+  echo "Valid options: jvm (default), native, multi-arch"
+  exit 1
+fi
+
+echo "Building platform-registration-service"
+echo "  Registry: $REGISTRY"
+echo "  Build Type: $BUILD_TYPE"
+echo ""
+
+# Validate registry
+case "$REGISTRY" in
+  local|localhost|ghcr|dockerhub)
+    # Valid registry
     ;;
-
-  localhost)
-    echo "Building and pushing to localhost:5000..."
-    ./gradlew clean build -x test \
-      -Dquarkus.profile=localhost \
-      -Dquarkus.container-image.build=true
-    echo "✓ Image pushed to localhost:5000/ai-pipestream/platform-registration-service:latest"
-    ;;
-
-  ghcr)
-    echo "Building and pushing to GitHub Container Registry..."
-    ./gradlew clean build -x test \
-      -Dquarkus.profile=ghcr \
-      -Dquarkus.container-image.build=true
-    echo "✓ Image pushed to ghcr.io/ai-pipestream/platform-registration-service:latest"
-    ;;
-
-  dockerhub)
-    echo "Building and pushing to Docker Hub..."
-    ./gradlew clean build -x test \
-      -Dquarkus.profile=dockerhub \
-      -Dquarkus.container-image.build=true
-    echo "✓ Image pushed to docker.io/ai-pipestream/platform-registration-service:latest"
-    ;;
-
-  native)
-    echo "Building native image (this will take several minutes)..."
-    ./gradlew clean build -x test \
-      -Dquarkus.profile=local \
-      -Dquarkus.package.type=native \
-      -Dquarkus.container-image.build=true
-    echo "✓ Native image built (much smaller size, faster startup)"
-    ;;
-
-  multi-arch)
-    TARGET_PROFILE="${2:-ghcr}"
-    echo "Building multi-architecture image (amd64 + arm64) for $TARGET_PROFILE..."
-    echo "Note: This requires Docker Buildx and QEMU"
-
-    # Create buildx builder if it doesn't exist
-    if ! docker buildx ls | grep -q multiarch; then
-      docker buildx create --name multiarch --use
-    else
-      docker buildx use multiarch
-    fi
-
-    ./gradlew clean build -x test
-
-    case "$TARGET_PROFILE" in
-      local)
-        REGISTRY=""
-        PUSH_FLAG="--load"
-        ;;
-      localhost)
-        REGISTRY="localhost:5000/"
-        PUSH_FLAG="--push"
-        ;;
-      ghcr)
-        REGISTRY="ghcr.io/"
-        PUSH_FLAG="--push"
-        ;;
-      dockerhub)
-        REGISTRY="docker.io/"
-        PUSH_FLAG="--push"
-        ;;
-      *)
-        echo "Unknown profile: $TARGET_PROFILE"
-        exit 1
-        ;;
-    esac
-
-    docker buildx build \
-      --platform linux/amd64,linux/arm64 \
-      -f src/main/docker/Dockerfile.jvm \
-      -t "${REGISTRY}ai-pipestream/platform-registration-service:latest" \
-      $PUSH_FLAG \
-      .
-
-    echo "✓ Multi-arch image built for amd64 + arm64"
-    ;;
-
   *)
-    echo "Unknown profile: $PROFILE"
+    echo "Unknown registry: $REGISTRY"
     echo ""
-    echo "Available profiles:"
+    echo "Available registries:"
     echo "  local      - Build to local Docker (no push)"
     echo "  localhost  - Push to localhost:5000 registry"
     echo "  ghcr       - Push to GitHub Container Registry"
     echo "  dockerhub  - Push to Docker Hub"
-    echo "  native     - Build native image (smaller, faster)"
-    echo "  multi-arch - Build for AMD64 + ARM64"
     exit 1
     ;;
 esac
+
+# Determine registry details
+case "$REGISTRY" in
+  local)
+    REGISTRY_URL=""
+    REGISTRY_DISPLAY="local Docker"
+    ;;
+  localhost)
+    REGISTRY_URL="localhost:5000/"
+    REGISTRY_DISPLAY="localhost:5000"
+    ;;
+  ghcr)
+    REGISTRY_URL="ghcr.io/"
+    REGISTRY_DISPLAY="GitHub Container Registry"
+    ;;
+  dockerhub)
+    REGISTRY_URL="docker.io/"
+    REGISTRY_DISPLAY="Docker Hub"
+    ;;
+esac
+
+# Handle multi-arch builds
+if [[ "$MULTIARCH" == "true" ]]; then
+  echo "Building multi-architecture image (amd64 + arm64) for $REGISTRY_DISPLAY..."
+  echo "Note: This requires Docker Buildx and QEMU"
+  echo ""
+
+  # Create buildx builder if it doesn't exist
+  if ! docker buildx ls | grep -q multiarch; then
+    docker buildx create --name multiarch --use
+  else
+    docker buildx use multiarch
+  fi
+
+  # Build the app first
+  if [[ "$NATIVE" == "true" ]]; then
+    echo "Error: Multi-arch native builds are not yet supported"
+    echo "Please use either multi-arch OR native, not both"
+    exit 1
+  fi
+
+  ./gradlew clean build -x test
+
+  # Determine push flag
+  if [[ "$REGISTRY" == "local" ]]; then
+    PUSH_FLAG="--load"
+  else
+    PUSH_FLAG="--push"
+  fi
+
+  docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    -f src/main/docker/Dockerfile.jvm \
+    -t "${REGISTRY_URL}ai-pipestream/platform-registration-service:latest" \
+    $PUSH_FLAG \
+    .
+
+  echo ""
+  echo "✓ Multi-arch image built for amd64 + arm64"
+  echo "  Tagged as: ${REGISTRY_URL}ai-pipestream/platform-registration-service:latest"
+
+# Handle native builds
+elif [[ "$NATIVE" == "true" ]]; then
+  echo "Building native image for $REGISTRY_DISPLAY..."
+  echo "Note: This will take several minutes (5-10 min)"
+  echo ""
+
+  ./gradlew clean build -x test \
+    -Dquarkus.profile=$REGISTRY \
+    -Dquarkus.package.type=native \
+    -Dquarkus.container-image.build=true
+
+  echo ""
+  echo "✓ Native image built (much smaller size, faster startup)"
+  echo "  Tagged as: ${REGISTRY_URL}ai-pipestream/platform-registration-service:latest"
+
+# Handle standard JVM builds
+else
+  echo "Building JVM image for $REGISTRY_DISPLAY..."
+  echo ""
+
+  ./gradlew clean build -x test \
+    -Dquarkus.profile=$REGISTRY \
+    -Dquarkus.container-image.build=true
+
+  echo ""
+  echo "✓ JVM image built"
+  echo "  Tagged as: ${REGISTRY_URL}ai-pipestream/platform-registration-service:latest"
+fi
 
 echo ""
 echo "Build completed successfully!"
