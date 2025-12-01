@@ -67,11 +67,6 @@ tasks.named('quarkusGenerateCodeTests').configure {
     dependsOn 'syncProtos'
 }
 
-// Fix sourcesJar dependency on generated code
-tasks.named('sourcesJar', Jar) {
-    dependsOn 'quarkusGenerateCode'
-}
-
 dependencies {
     // Import pipeline BOM to align all managed versions (dependency management only, no code coupling)
     implementation platform("ai.pipestream:pipestream-bom:${pipestreamBomVersion}")
@@ -291,5 +286,12 @@ nmcp {
         username = providers.environmentVariable("MAVEN_CENTRAL_USERNAME")
         password = providers.environmentVariable("MAVEN_CENTRAL_PASSWORD")
         publishingType = "AUTOMATIC"
+    }
+}
+
+// Fix sourcesJar dependency on generated code
+afterEvaluate {
+    tasks.named('sourcesJar', Jar) {
+        dependsOn 'quarkusGenerateCode'
     }
 }

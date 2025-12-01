@@ -82,6 +82,7 @@ services:
       QUARKUS_HTTP_CORS_ORIGINS: '*'
       QUARKUS_PROFILE: 'prod'
     labels:
+      quarkus-dev-service-apicurio-registry: kafka-test
       io.quarkus.devservices.compose.wait_for.logs: ".*Listening on.*"
       io.quarkus.devservices.compose.config_map.8080: mp.messaging.connector.smallrye-kafka.apicurio.registry.url
     healthcheck:
