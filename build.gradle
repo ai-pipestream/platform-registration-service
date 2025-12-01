@@ -78,6 +78,7 @@ dependencies {
     implementation libs.quarkus.cache
     implementation libs.quarkus.vertx
     implementation libs.quarkus.micrometer.registry.prometheus
+    implementation 'io.quarkus:quarkus-container-image-docker'
     implementation 'io.quarkus:quarkus-hibernate-reactive-panache'
     implementation 'io.quarkus:quarkus-hibernate-orm'
     implementation 'io.quarkus:quarkus-reactive-mysql-client'
