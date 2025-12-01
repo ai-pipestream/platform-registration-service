@@ -1,7 +1,7 @@
 package ai.pipestream.registration.handlers;
 
 import com.google.protobuf.Timestamp;
-import ai.pipestream.platform.registration.*;
+import ai.pipestream.platform.registration.v1.*;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.ext.consul.ConsulClient;
@@ -14,49 +14,50 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Handles service discovery and lookup operations
+ * Handles service discovery and lookup operations.
+ * Updated to use the new VerbNoun proto naming convention.
  */
 @ApplicationScoped
 public class ServiceDiscoveryHandler {
-    
+
     private static final Logger LOG = Logger.getLogger(ServiceDiscoveryHandler.class);
-    
+
     @Inject
     ConsulClient consulClient;
-    
+
     /**
      * List all services (non-modules)
      */
-    public Uni<ServiceListResponse> listServices() {
+    public Uni<ListServicesResponse> listServices() {
         return consulClient.catalogServices()
             .flatMap(services -> {
                 if (services == null || services.getList() == null || services.getList().isEmpty()) {
                     return Uni.createFrom().item(buildEmptyServiceList());
                 }
-                
+
                 // Get health info for each service
-                List<Uni<List<ServiceDetails>>> serviceUnis = services.getList().stream()
+                List<Uni<List<GetServiceResponse>>> serviceUnis = services.getList().stream()
                     .map(service -> consulClient.healthServiceNodes(service.getName(), true)
                         .map(healthNodes -> {
                             if (healthNodes == null || healthNodes.getList() == null) {
-                                return Collections.<ServiceDetails>emptyList();
+                                return Collections.<GetServiceResponse>emptyList();
                             }
                             return healthNodes.getList().stream()
                                 .filter(entry -> !isModule(entry.getService().getTags()))
-                                .map(this::convertToServiceDetails)
+                                .map(this::convertToGetServiceResponse)
                                 .collect(Collectors.toList());
                         })
-                        .onFailure().recoverWithItem(Collections.<ServiceDetails>emptyList())
+                        .onFailure().recoverWithItem(Collections.<GetServiceResponse>emptyList())
                     )
                     .collect(Collectors.toList());
-                
+
                 return Uni.join().all(serviceUnis).andCollectFailures()
                     .map(lists -> {
-                        List<ServiceDetails> allServices = lists.stream()
+                        List<GetServiceResponse> allServices = lists.stream()
                             .flatMap(List::stream)
                             .collect(Collectors.toList());
-                        
-                        return ServiceListResponse.newBuilder()
+
+                        return ListServicesResponse.newBuilder()
                             .addAllServices(allServices)
                             .setAsOf(createTimestamp())
                             .setTotalCount(allServices.size())
@@ -68,40 +69,40 @@ public class ServiceDiscoveryHandler {
                 return buildEmptyServiceList();
             });
     }
-    
+
     /**
      * List all modules
      */
-    public Uni<ModuleListResponse> listModules() {
+    public Uni<ListModulesResponse> listModules() {
         return consulClient.catalogServices()
             .flatMap(services -> {
                 if (services == null || services.getList() == null || services.getList().isEmpty()) {
                     return Uni.createFrom().item(buildEmptyModuleList());
                 }
-                
+
                 // Get health info for each service that is a module
-                List<Uni<List<ModuleDetails>>> moduleUnis = services.getList().stream()
+                List<Uni<List<GetModuleResponse>>> moduleUnis = services.getList().stream()
                     .map(service -> consulClient.healthServiceNodes(service.getName(), true)
                         .map(healthNodes -> {
                             if (healthNodes == null || healthNodes.getList() == null) {
-                                return Collections.<ModuleDetails>emptyList();
+                                return Collections.<GetModuleResponse>emptyList();
                             }
                             return healthNodes.getList().stream()
                                 .filter(entry -> isModule(entry.getService().getTags()))
-                                .map(this::convertToModuleDetails)
+                                .map(this::convertToGetModuleResponse)
                                 .collect(Collectors.toList());
                         })
-                        .onFailure().recoverWithItem(Collections.<ModuleDetails>emptyList())
+                        .onFailure().recoverWithItem(Collections.<GetModuleResponse>emptyList())
                     )
                     .collect(Collectors.toList());
-                
+
                 return Uni.join().all(moduleUnis).andCollectFailures()
                     .map(lists -> {
-                        List<ModuleDetails> allModules = lists.stream()
+                        List<GetModuleResponse> allModules = lists.stream()
                             .flatMap(List::stream)
                             .collect(Collectors.toList());
-                        
-                        return ModuleListResponse.newBuilder()
+
+                        return ListModulesResponse.newBuilder()
                             .addAllModules(allModules)
                             .setAsOf(createTimestamp())
                             .setTotalCount(allModules.size())
@@ -113,11 +114,11 @@ public class ServiceDiscoveryHandler {
                 return buildEmptyModuleList();
             });
     }
-    
+
     /**
      * Get service by name (returns first healthy instance)
      */
-    public Uni<ServiceDetails> getServiceByName(String serviceName) {
+    public Uni<GetServiceResponse> getServiceByName(String serviceName) {
         return consulClient.healthServiceNodes(serviceName, true)
             .map(serviceEntries -> {
                 if (serviceEntries == null || serviceEntries.getList() == null || serviceEntries.getList().isEmpty()) {
@@ -126,14 +127,14 @@ public class ServiceDiscoveryHandler {
                     );
                 }
                 // Return first healthy instance
-                return convertToServiceDetails(serviceEntries.getList().get(0));
+                return convertToGetServiceResponse(serviceEntries.getList().get(0));
             });
     }
-    
+
     /**
      * Get service by ID
      */
-    public Uni<ServiceDetails> getServiceById(String serviceId) {
+    public Uni<GetServiceResponse> getServiceById(String serviceId) {
         // Consul doesn't have a direct "get by ID" so we need to extract service name and search
         String serviceName = extractServiceNameFromId(serviceId);
         if (serviceName == null) {
@@ -141,7 +142,7 @@ public class ServiceDiscoveryHandler {
                 io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid service ID format: " + serviceId)
             ));
         }
-        
+
         return consulClient.healthServiceNodes(serviceName, true)
             .map(serviceEntries -> {
                 if (serviceEntries == null || serviceEntries.getList() == null) {
@@ -149,22 +150,22 @@ public class ServiceDiscoveryHandler {
                         io.grpc.Status.NOT_FOUND.withDescription("Service not found: " + serviceId)
                     );
                 }
-                
+
                 var entry = serviceEntries.getList().stream()
                     .filter(e -> serviceId.equals(e.getService().getId()))
                     .findFirst()
                     .orElseThrow(() -> new io.grpc.StatusRuntimeException(
                         io.grpc.Status.NOT_FOUND.withDescription("Service instance not found: " + serviceId)
                     ));
-                
-                return convertToServiceDetails(entry);
+
+                return convertToGetServiceResponse(entry);
             });
     }
-    
+
     /**
      * Get module by name
      */
-    public Uni<ModuleDetails> getModuleByName(String moduleName) {
+    public Uni<GetModuleResponse> getModuleByName(String moduleName) {
         return consulClient.healthServiceNodes(moduleName, true)
             .map(serviceEntries -> {
                 if (serviceEntries == null || serviceEntries.getList() == null || serviceEntries.getList().isEmpty()) {
@@ -179,22 +180,22 @@ public class ServiceDiscoveryHandler {
                     .orElseThrow(() -> new io.grpc.StatusRuntimeException(
                         io.grpc.Status.NOT_FOUND.withDescription("Module not found: " + moduleName)
                     ));
-                
-                return convertToModuleDetails(moduleEntry);
+
+                return convertToGetModuleResponse(moduleEntry);
             });
     }
-    
+
     /**
      * Get module by ID
      */
-    public Uni<ModuleDetails> getModuleById(String moduleId) {
+    public Uni<GetModuleResponse> getModuleById(String moduleId) {
         String moduleName = extractServiceNameFromId(moduleId);
         if (moduleName == null) {
             return Uni.createFrom().failure(new io.grpc.StatusRuntimeException(
                 io.grpc.Status.INVALID_ARGUMENT.withDescription("Invalid module ID format: " + moduleId)
             ));
         }
-        
+
         return consulClient.healthServiceNodes(moduleName, true)
             .map(serviceEntries -> {
                 if (serviceEntries == null || serviceEntries.getList() == null) {
@@ -202,30 +203,30 @@ public class ServiceDiscoveryHandler {
                         io.grpc.Status.NOT_FOUND.withDescription("Module not found: " + moduleId)
                     );
                 }
-                
+
                 var entry = serviceEntries.getList().stream()
                     .filter(e -> moduleId.equals(e.getService().getId()) && isModule(e.getService().getTags()))
                     .findFirst()
                     .orElseThrow(() -> new io.grpc.StatusRuntimeException(
                         io.grpc.Status.NOT_FOUND.withDescription("Module instance not found: " + moduleId)
                     ));
-                
-                return convertToModuleDetails(entry);
+
+                return convertToGetModuleResponse(entry);
             });
     }
-    
+
     /**
      * Resolve service to find the best available instance
      */
-    public Uni<ServiceResolveResponse> resolveService(ServiceResolveRequest request) {
+    public Uni<ResolveServiceResponse> resolveService(ResolveServiceRequest request) {
         String serviceName = request.getServiceName();
-        
+
         return consulClient.healthServiceNodes(serviceName, true)
             .map(serviceEntries -> {
-                ServiceResolveResponse.Builder responseBuilder = ServiceResolveResponse.newBuilder()
+                ResolveServiceResponse.Builder responseBuilder = ResolveServiceResponse.newBuilder()
                     .setServiceName(serviceName)
                     .setResolvedAt(createTimestamp());
-                
+
                 if (serviceEntries == null || serviceEntries.getList() == null || serviceEntries.getList().isEmpty()) {
                     // No healthy instances found
                     return responseBuilder
@@ -235,9 +236,9 @@ public class ServiceDiscoveryHandler {
                         .setSelectionReason("No healthy instances found")
                         .build();
                 }
-                
+
                 List<io.vertx.ext.consul.ServiceEntry> healthyInstances = serviceEntries.getList();
-                
+
                 // Filter by required tags if specified
                 if (!request.getRequiredTagsList().isEmpty()) {
                     healthyInstances = healthyInstances.stream()
@@ -248,7 +249,7 @@ public class ServiceDiscoveryHandler {
                         })
                         .collect(Collectors.toList());
                 }
-                
+
                 // Filter by required capabilities if specified
                 if (!request.getRequiredCapabilitiesList().isEmpty()) {
                     healthyInstances = healthyInstances.stream()
@@ -264,7 +265,7 @@ public class ServiceDiscoveryHandler {
                         })
                         .collect(Collectors.toList());
                 }
-                
+
                 if (healthyInstances.isEmpty()) {
                     // No instances match the criteria
                     return responseBuilder
@@ -274,31 +275,31 @@ public class ServiceDiscoveryHandler {
                         .setSelectionReason("No instances match the required criteria")
                         .build();
                 }
-                
+
                 // Select the best instance
                 io.vertx.ext.consul.ServiceEntry selectedInstance = null;
                 String selectionReason = "";
-                
+
                 if (request.getPreferLocal()) {
                     // Try to find an instance on localhost first
                     Optional<io.vertx.ext.consul.ServiceEntry> localInstance = healthyInstances.stream()
-                        .filter(entry -> "localhost".equals(entry.getService().getAddress()) || 
+                        .filter(entry -> "localhost".equals(entry.getService().getAddress()) ||
                                         "127.0.0.1".equals(entry.getService().getAddress()))
                         .findFirst();
-                    
+
                     if (localInstance.isPresent()) {
                         selectedInstance = localInstance.get();
                         selectionReason = "Selected local instance as requested";
                     }
                 }
-                
+
                 if (selectedInstance == null) {
                     // Use round-robin or random selection
                     // For now, just pick the first one (could be enhanced with load balancing)
                     selectedInstance = healthyInstances.get(0);
                     selectionReason = "Selected first available healthy instance";
                 }
-                
+
                 var service = selectedInstance.getService();
                 responseBuilder
                     .setFound(true)
@@ -308,7 +309,7 @@ public class ServiceDiscoveryHandler {
                     .setTotalInstances(serviceEntries.getList().size())
                     .setHealthyInstances(healthyInstances.size())
                     .setSelectionReason(selectionReason);
-                
+
                 // Add metadata
                 if (service.getMeta() != null) {
                     responseBuilder.putAllMetadata(service.getMeta());
@@ -316,7 +317,7 @@ public class ServiceDiscoveryHandler {
                         responseBuilder.setVersion(service.getMeta().get("version"));
                     }
                 }
-                
+
                 // Add tags and capabilities
                 if (service.getTags() != null) {
                     for (String tag : service.getTags()) {
@@ -327,12 +328,12 @@ public class ServiceDiscoveryHandler {
                         }
                     }
                 }
-                
+
                 return responseBuilder.build();
             })
             .onFailure().recoverWithItem(throwable -> {
                 LOG.errorf(throwable, "Failed to resolve service: %s", serviceName);
-                return ServiceResolveResponse.newBuilder()
+                return ResolveServiceResponse.newBuilder()
                     .setFound(false)
                     .setServiceName(serviceName)
                     .setSelectionReason("Error resolving service: " + throwable.getMessage())
@@ -340,16 +341,16 @@ public class ServiceDiscoveryHandler {
                     .build();
             });
     }
-    
-    private ServiceDetails convertToServiceDetails(io.vertx.ext.consul.ServiceEntry entry) {
+
+    private GetServiceResponse convertToGetServiceResponse(io.vertx.ext.consul.ServiceEntry entry) {
         var service = entry.getService();
-        ServiceDetails.Builder builder = ServiceDetails.newBuilder()
+        GetServiceResponse.Builder builder = GetServiceResponse.newBuilder()
             .setServiceId(service.getId())
             .setServiceName(service.getName())
             .setHost(service.getAddress())
             .setPort(service.getPort())
             .setIsHealthy(true); // Only healthy services are returned by default
-        
+
         // Extract metadata
         if (service.getMeta() != null) {
             builder.putAllMetadata(service.getMeta());
@@ -357,7 +358,7 @@ public class ServiceDiscoveryHandler {
                 builder.setVersion(service.getMeta().get("version"));
             }
         }
-        
+
         // Extract tags and capabilities
         if (service.getTags() != null) {
             for (String tag : service.getTags()) {
@@ -368,22 +369,22 @@ public class ServiceDiscoveryHandler {
                 }
             }
         }
-        
+
         builder.setRegisteredAt(createTimestamp());
         builder.setLastHealthCheck(createTimestamp());
-        
+
         return builder.build();
     }
-    
-    private ModuleDetails convertToModuleDetails(io.vertx.ext.consul.ServiceEntry entry) {
+
+    private GetModuleResponse convertToGetModuleResponse(io.vertx.ext.consul.ServiceEntry entry) {
         var service = entry.getService();
-        ModuleDetails.Builder builder = ModuleDetails.newBuilder()
+        GetModuleResponse.Builder builder = GetModuleResponse.newBuilder()
             .setServiceId(service.getId())
             .setModuleName(service.getName())
             .setHost(service.getAddress())
             .setPort(service.getPort())
             .setIsHealthy(true);
-        
+
         // Extract metadata
         if (service.getMeta() != null) {
             builder.putAllMetadata(service.getMeta());
@@ -398,43 +399,43 @@ public class ServiceDiscoveryHandler {
                 builder.setOutputFormat(service.getMeta().get("output-format"));
             }
         }
-        
+
         builder.setRegisteredAt(createTimestamp());
         builder.setLastHealthCheck(createTimestamp());
-        
+
         return builder.build();
     }
-    
+
     private boolean isModule(List<String> tags) {
         return tags != null && tags.contains("module");
     }
-    
+
     private String extractServiceNameFromId(String serviceId) {
         // Format: serviceName-host-port
         int lastDash = serviceId.lastIndexOf('-');
         if (lastDash == -1) return null;
-        
+
         String withoutPort = serviceId.substring(0, lastDash);
         int secondLastDash = withoutPort.lastIndexOf('-');
         if (secondLastDash == -1) return null;
-        
+
         return withoutPort.substring(0, secondLastDash);
     }
-    
-    private ServiceListResponse buildEmptyServiceList() {
-        return ServiceListResponse.newBuilder()
+
+    private ListServicesResponse buildEmptyServiceList() {
+        return ListServicesResponse.newBuilder()
             .setAsOf(createTimestamp())
             .setTotalCount(0)
             .build();
     }
-    
-    private ModuleListResponse buildEmptyModuleList() {
-        return ModuleListResponse.newBuilder()
+
+    private ListModulesResponse buildEmptyModuleList() {
+        return ListModulesResponse.newBuilder()
             .setAsOf(createTimestamp())
             .setTotalCount(0)
             .build();
     }
-    
+
     private Timestamp createTimestamp() {
         long millis = System.currentTimeMillis();
         return Timestamp.newBuilder()
@@ -442,23 +443,25 @@ public class ServiceDiscoveryHandler {
             .setNanos((int) ((millis % 1000) * 1_000_000))
             .build();
     }
-    
+
     /**
      * Watch for real-time updates to the list of all healthy services.
      * Sends an initial list immediately, then sends updates whenever services change.
      */
-    public Multi<ServiceListResponse> watchServices() {
+    public Multi<WatchServicesResponse> watchServices() {
         LOG.info("Starting service watch stream");
 
         // Send initial list immediately
-        Multi<ServiceListResponse> initialList = Multi.createFrom().uni(listServices())
+        Multi<WatchServicesResponse> initialList = Multi.createFrom().uni(listServices())
+            .map(this::convertToWatchServicesResponse)
             .onItem().invoke(response ->
                 LOG.infof("Sending initial service list with %d services", response.getTotalCount())
             );
 
         // Then poll for changes every 2 seconds
-        Multi<ServiceListResponse> updates = Multi.createFrom().ticks().every(Duration.ofSeconds(2))
+        Multi<WatchServicesResponse> updates = Multi.createFrom().ticks().every(Duration.ofSeconds(2))
             .onItem().transformToUniAndConcatenate(tick -> listServices())
+            .map(this::convertToWatchServicesResponse)
             .onItem().invoke(response ->
                 LOG.debugf("Service watch update: %d services", response.getTotalCount())
             )
@@ -467,7 +470,7 @@ public class ServiceDiscoveryHandler {
             )
             .onFailure().recoverWithItem(throwable -> {
                 LOG.error("Recovering from error in service watch", throwable);
-                return buildEmptyServiceList();
+                return buildEmptyWatchServicesResponse();
             });
 
         // Combine initial list with ongoing updates
@@ -481,18 +484,20 @@ public class ServiceDiscoveryHandler {
      * Watch for real-time updates to the list of all registered modules.
      * Sends an initial list immediately, then sends updates whenever modules change.
      */
-    public Multi<ModuleListResponse> watchModules() {
+    public Multi<WatchModulesResponse> watchModules() {
         LOG.info("Starting module watch stream");
 
         // Send initial list immediately
-        Multi<ModuleListResponse> initialList = Multi.createFrom().uni(listModules())
+        Multi<WatchModulesResponse> initialList = Multi.createFrom().uni(listModules())
+            .map(this::convertToWatchModulesResponse)
             .onItem().invoke(response ->
                 LOG.infof("Sending initial module list with %d modules", response.getTotalCount())
             );
 
         // Then poll for changes every 2 seconds
-        Multi<ModuleListResponse> updates = Multi.createFrom().ticks().every(Duration.ofSeconds(2))
+        Multi<WatchModulesResponse> updates = Multi.createFrom().ticks().every(Duration.ofSeconds(2))
             .onItem().transformToUniAndConcatenate(tick -> listModules())
+            .map(this::convertToWatchModulesResponse)
             .onItem().invoke(response ->
                 LOG.debugf("Module watch update: %d modules", response.getTotalCount())
             )
@@ -501,7 +506,7 @@ public class ServiceDiscoveryHandler {
             )
             .onFailure().recoverWithItem(throwable -> {
                 LOG.error("Recovering from error in module watch", throwable);
-                return buildEmptyModuleList();
+                return buildEmptyWatchModulesResponse();
             });
 
         // Combine initial list with ongoing updates
@@ -509,5 +514,35 @@ public class ServiceDiscoveryHandler {
             .streams(initialList, updates)
             .onCompletion().invoke(() -> LOG.info("Module watch stream completed"))
             .onCancellation().invoke(() -> LOG.info("Module watch stream cancelled by client"));
+    }
+
+    private WatchServicesResponse convertToWatchServicesResponse(ListServicesResponse listResponse) {
+        return WatchServicesResponse.newBuilder()
+            .addAllServices(listResponse.getServicesList())
+            .setAsOf(listResponse.getAsOf())
+            .setTotalCount(listResponse.getTotalCount())
+            .build();
+    }
+
+    private WatchModulesResponse convertToWatchModulesResponse(ListModulesResponse listResponse) {
+        return WatchModulesResponse.newBuilder()
+            .addAllModules(listResponse.getModulesList())
+            .setAsOf(listResponse.getAsOf())
+            .setTotalCount(listResponse.getTotalCount())
+            .build();
+    }
+
+    private WatchServicesResponse buildEmptyWatchServicesResponse() {
+        return WatchServicesResponse.newBuilder()
+            .setAsOf(createTimestamp())
+            .setTotalCount(0)
+            .build();
+    }
+
+    private WatchModulesResponse buildEmptyWatchModulesResponse() {
+        return WatchModulesResponse.newBuilder()
+            .setAsOf(createTimestamp())
+            .setTotalCount(0)
+            .build();
     }
 }

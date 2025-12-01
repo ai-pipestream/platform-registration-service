@@ -1,9 +1,9 @@
 package ai.pipestream.registration.events;
 
-import ai.pipestream.platform.registration.ModuleRegistered;
-import ai.pipestream.platform.registration.ServiceRegistered;
-import ai.pipestream.platform.registration.ModuleUnregistered;
-import ai.pipestream.platform.registration.ServiceUnregistered;
+import ai.pipestream.platform.registration.v1.ModuleRegistered;
+import ai.pipestream.platform.registration.v1.ServiceRegistered;
+import ai.pipestream.platform.registration.v1.ModuleUnregistered;
+import ai.pipestream.platform.registration.v1.ServiceUnregistered;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import io.smallrye.reactive.messaging.MutinyEmitter;

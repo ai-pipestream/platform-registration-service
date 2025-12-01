@@ -59,3 +59,6 @@ CLAUDE.md
 
 # Auto-downloaded dev helpers
 .dev-helpers/
+
+# Generated proto files from Buf Registry
+src/main/proto/
