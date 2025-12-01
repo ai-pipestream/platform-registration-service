@@ -14,7 +14,7 @@ dependencyResolutionManagement {
             // Import version catalog from published BOM
             // Available on both private Reposilite and public GitHub Packages
             // Version controlled via gradle.properties
-            from("ai.pipestream:pipestream-bom-catalog:${settings.ext.find('pipestreamBomVersion') ?: '0.3.6'}")
+            from("ai.pipestream:pipestream-bom-catalog:${settings.ext.find('pipestreamBomVersion') ?: '0.3.7-SNAPSHOT'}")
         }
     }
 

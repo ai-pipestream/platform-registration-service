@@ -2,12 +2,12 @@ import org.apache.tools.ant.filters.ReplaceTokens
 import org.gradle.plugins.signing.Sign
 
 plugins {
-    id 'pl.allegro.tech.build.axion-release' version "${axionReleaseVersion}"
+    alias(libs.plugins.axion.release)
     alias(libs.plugins.java)
     alias(libs.plugins.quarkus)
     alias(libs.plugins.maven.publish)
     id 'signing'
-    id 'com.gradleup.nmcp' version "${nmcpVersion}"
+    alias(libs.plugins.nmcp)
 }
 
 scmVersion {
