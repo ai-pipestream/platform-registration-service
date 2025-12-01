@@ -41,9 +41,25 @@ public class ApicurioRegistryClient {
     void init() {
         // Initialize the v3 client with VertX adapter
         this.requestAdapter = new VertXRequestAdapter(vertx.getDelegate());
-        this.requestAdapter.setBaseUrl(apicurioUrl + "/apis/registry/v3");
+
+        // Smart URL handling: accept both base URLs and full API endpoint URLs
+        String baseUrl;
+        if (apicurioUrl.endsWith("/apis/registry/v3")) {
+            // Already has the v3 endpoint path - use as-is
+            baseUrl = apicurioUrl;
+            LOG.infof("Apicurio Registry v3 client initialized with full URL: %s", baseUrl);
+        } else if (apicurioUrl.endsWith("/apis/registry/v3/")) {
+            // Has v3 endpoint with trailing slash - remove trailing slash
+            baseUrl = apicurioUrl.substring(0, apicurioUrl.length() - 1);
+            LOG.infof("Apicurio Registry v3 client initialized with full URL (trailing slash removed): %s", baseUrl);
+        } else {
+            // Base URL only - append the v3 API endpoint path
+            baseUrl = apicurioUrl + "/apis/registry/v3";
+            LOG.infof("Apicurio Registry v3 client initialized - appended /apis/registry/v3 to base URL: %s", baseUrl);
+        }
+
+        this.requestAdapter.setBaseUrl(baseUrl);
         this.registryClient = new RegistryClient(requestAdapter);
-        LOG.infof("Apicurio Registry v3 client initialized for: %s", apicurioUrl);
     }
 
     /**

@@ -176,15 +176,37 @@ class SchemaRetrievalHandlerTest {
         verify(apicurioClient).getArtifactMetadata(eq(serviceName));
     }
 
-    // TODO: Re-enable this test once grpc-wiremock is adapted for BSR protos
-    // @Test
-    // void getModuleSchema_fallbackToModule_success() { ... }
+    @Test
+    void getModuleSchema_notFound_throwsException() {
+        // Arrange
+        String serviceName = "non-existent-module";
+        String version = "1.0.0";
 
-    // TODO: Re-enable this test once grpc-wiremock is adapted for BSR protos
-    // @Test
-    // void getModuleSchema_synthesizeSchema_whenModuleHasNoSchema() { ... }
+        when(moduleRepository.findSchemaById(anyString()))
+            .thenReturn(Uni.createFrom().nullItem());
 
-    // TODO: Re-enable this test once grpc-wiremock is adapted for BSR protos
-    // @Test
-    // void getModuleSchema_notFound_throwsException() { ... }
+        when(apicurioClient.getSchema(eq(serviceName), eq(version)))
+            .thenReturn(Uni.createFrom().failure(
+                new ApicurioRegistryException("Schema not found", serviceName, "artifact-id",
+                    new RuntimeException("404 Not Found"))));
+
+        GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
+            .setModuleName(serviceName)
+            .setVersion(version)
+            .build();
+
+        // Act & Assert
+        StatusRuntimeException exception = assertThrows(StatusRuntimeException.class, () -> {
+            schemaRetrievalHandler.getModuleSchema(request)
+                .await().indefinitely();
+        });
+
+        assertThat("Exception status should be NOT_FOUND",
+            exception.getStatus().getCode(), is(equalTo(Status.Code.NOT_FOUND)));
+        assertThat("Exception message should contain service name",
+            exception.getMessage(), containsString(serviceName));
+
+        verify(moduleRepository).findSchemaById(anyString());
+        verify(apicurioClient).getSchema(eq(serviceName), eq(version));
+    }
 }
