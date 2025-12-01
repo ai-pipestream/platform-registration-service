@@ -21,7 +21,8 @@ scmVersion {
     }
 }
 
-def pipestreamBomVersion = findProperty('pipestreamBomVersion') ?: '0.3.6'
+// BOM version is defined in gradle.properties
+def pipestreamBomVersion = findProperty('pipestreamBomVersion')
 
 // 1. Define the export path
 def bufExportDir = layout.buildDirectory.dir("generated/buf-protos")
@@ -71,9 +72,12 @@ dependencies {
     // Import pipeline BOM to align all managed versions (dependency management only, no code coupling)
     implementation platform("ai.pipestream:pipestream-bom:${pipestreamBomVersion}")
 
-    // Quarkus dependencies
+    // Quarkus dependencies - using TOML catalog for version management
     implementation libs.quarkus.grpc
     implementation libs.quarkus.arc
+    implementation libs.quarkus.cache
+    implementation libs.quarkus.vertx
+    implementation libs.quarkus.micrometer.registry.prometheus
     implementation 'io.quarkus:quarkus-hibernate-reactive-panache'
     implementation 'io.quarkus:quarkus-hibernate-orm'
     implementation 'io.quarkus:quarkus-reactive-mysql-client'
@@ -81,32 +85,26 @@ dependencies {
     implementation 'io.quarkus:quarkus-flyway'
     implementation 'org.flywaydb:flyway-mysql'
     implementation 'io.quarkus:quarkus-smallrye-health'
-    implementation 'io.quarkus:quarkus-cache'
-    implementation 'io.quarkus:quarkus-micrometer-registry-prometheus'
-    implementation 'io.quarkus:quarkus-micrometer-registry-prometheus'
-    
-    // Quarkus Apicurio Registry Protobuf Extension (Zero-Config)
-    // Auto-detects Protobuf message types and configures serializers/deserializers
-    implementation 'ai.pipestream:quarkus-apicurio-registry-protobuf:0.0.1'
-
-    // Reactive Messaging for Kafka (provides @Channel, @Incoming, MutinyEmitter)
     implementation 'io.quarkus:quarkus-messaging-kafka'
 
     // Consul integration
     implementation 'io.smallrye.reactive:smallrye-mutiny-vertx-consul-client'
-    implementation 'io.quarkus:quarkus-vertx'
     implementation 'io.smallrye.stork:stork-service-discovery-consul'
+
+    // Quarkus Apicurio Registry Protobuf Extension (Zero-Config)
+    // Auto-detects Protobuf message types and configures serializers/deserializers
+    implementation libs.quarkus.apicurio.registry.protobuf
 
     // Apicurio Registry v3 client (transitive from extension, but kept for explicit usage if needed)
     implementation libs.apicurio.registry.java.sdk
     implementation libs.apicurio.registry.common
 
-    // Pipestream libraries - versions managed entirely by the BOM/catalog
-    implementation 'ai.pipestream:pipestream-quarkus-devservices'
+    // Pipestream libraries - using TOML catalog for version management
+    implementation libs.pipestream.devservices
 
-    // Testing
+    // Testing - using TOML catalog where available
     testImplementation libs.quarkus.junit5
-    testImplementation 'io.quarkus:quarkus-junit5-mockito'
+    testImplementation libs.quarkus.junit5.mockito
     testImplementation 'io.quarkus:quarkus-test-vertx'
     testImplementation 'org.testcontainers:mysql'
     testImplementation libs.rest.assured
@@ -231,8 +229,8 @@ publishing {
                     if (!existingBom) {
                         def bomDependency = depsNode.appendNode('dependency')
                         bomDependency.appendNode('groupId', 'ai.pipestream')
-                        bomDependency.appendNode('artifactId', 'pipeline-bom')
-                        bomDependency.appendNode('version', pipelineBomVersion)
+                        bomDependency.appendNode('artifactId', 'pipestream-bom')
+                        bomDependency.appendNode('version', pipestreamBomVersion)
                         bomDependency.appendNode('type', 'pom')
                         bomDependency.appendNode('scope', 'import')
                     }
