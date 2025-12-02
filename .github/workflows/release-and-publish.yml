@@ -50,10 +50,7 @@ jobs:
         uses: bufbuild/buf-action@v1
         with:
           token: ${{ secrets.BUF_TOKEN }}
-          lint: false
-          format: false
-          breaking: false
-          push: false
+          setup_only: true
 
       - name: Build and test with Gradle
         env:
@@ -107,10 +104,7 @@ jobs:
         uses: bufbuild/buf-action@v1
         with:
           token: ${{ secrets.BUF_TOKEN }}
-          lint: false
-          format: false
-          breaking: false
-          push: false
+          setup_only: true
 
       - name: Configure Git
         run: |
@@ -254,10 +248,7 @@ jobs:
         uses: bufbuild/buf-action@v1
         with:
           token: ${{ secrets.BUF_TOKEN }}
-          lint: false
-          format: false
-          breaking: false
-          push: false
+          setup_only: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
