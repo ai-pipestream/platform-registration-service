@@ -3,6 +3,20 @@ name: Docker Hub Publish
 on:
   repository_dispatch:
     types: [dockerhub-publish]
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: 'Base GHCR image (e.g., ghcr.io/ai-pipestream/platform-registration-service)'
+        required: true
+        default: 'ghcr.io/ai-pipestream/platform-registration-service'
+      dockerhub_repo:
+        description: 'Docker Hub repository (e.g., pipestreamai/platform-registration-service)'
+        required: true
+        default: 'pipestreamai/platform-registration-service'
+      tags:
+        description: 'Space-separated tags (e.g., "0.0.1 latest")'
+        required: true
+        default: 'latest'
 
 jobs:
   push-to-dockerhub:
@@ -11,13 +25,28 @@ jobs:
       contents: read
       packages: read
     steps:
-      - name: Validate payload
+      - name: Set variables
+        id: vars
         run: |
-          echo "Payload: ${{ toJson(github.event.client_payload) }}"
-          if [ -z "${{ github.event.client_payload.base_image }}" ] || [ -z "${{ github.event.client_payload.dockerhub_repo }}" ] || [ -z "${{ github.event.client_payload.tags }}" ]; then
-            echo "Missing required client_payload fields: base_image, dockerhub_repo, tags" >&2
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "base_image=${{ inputs.base_image }}" >> $GITHUB_OUTPUT
+            echo "dockerhub_repo=${{ inputs.dockerhub_repo }}" >> $GITHUB_OUTPUT
+            echo "tags=${{ inputs.tags }}" >> $GITHUB_OUTPUT
+          else
+            echo "base_image=${{ github.event.client_payload.base_image }}" >> $GITHUB_OUTPUT
+            echo "dockerhub_repo=${{ github.event.client_payload.dockerhub_repo }}" >> $GITHUB_OUTPUT
+            echo "tags=${{ github.event.client_payload.tags }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate inputs
+        run: |
+          if [ -z "${{ steps.vars.outputs.base_image }}" ] || [ -z "${{ steps.vars.outputs.dockerhub_repo }}" ] || [ -z "${{ steps.vars.outputs.tags }}" ]; then
+            echo "Missing required inputs: base_image, dockerhub_repo, tags" >&2
             exit 1
           fi
+          echo "Base image: ${{ steps.vars.outputs.base_image }}"
+          echo "Docker Hub repo: ${{ steps.vars.outputs.dockerhub_repo }}"
+          echo "Tags: ${{ steps.vars.outputs.tags }}"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -34,9 +63,9 @@ jobs:
 
       - name: Pull from GHCR, retag, and push to Docker Hub
         env:
-          BASE_IMAGE: ${{ github.event.client_payload.base_image }}
-          DOCKERHUB_REPO: ${{ github.event.client_payload.dockerhub_repo }}
-          TAGS: ${{ github.event.client_payload.tags }}
+          BASE_IMAGE: ${{ steps.vars.outputs.base_image }}
+          DOCKERHUB_REPO: ${{ steps.vars.outputs.dockerhub_repo }}
+          TAGS: ${{ steps.vars.outputs.tags }}
         run: |
           set -euo pipefail
           echo "Processing tags: $TAGS"
