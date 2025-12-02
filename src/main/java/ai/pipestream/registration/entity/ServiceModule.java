@@ -52,7 +52,17 @@ public class ServiceModule extends PanacheEntityBase {
     @Enumerated(EnumType.STRING)
     public ServiceStatus status = ServiceStatus.ACTIVE;
     
-    // Convenience methods
+    /**
+     * Convenience methods
+     */
+
+    /**
+     * Creates a new ServiceModule instance.
+     * @param serviceName the name of the service
+     * @param host the host address
+     * @param port the port number
+     * @return the created ServiceModule
+     */
     public static ServiceModule create(String serviceName, String host, int port) {
         ServiceModule module = new ServiceModule();
         module.serviceId = generateServiceId(serviceName, host, port);
@@ -63,14 +73,28 @@ public class ServiceModule extends PanacheEntityBase {
         return module;
     }
     
+    /**
+     * Generates a unique service ID.
+     * @param serviceName the name of the service
+     * @param host the host address
+     * @param port the port number
+     * @return the generated service ID
+     */
     public static String generateServiceId(String serviceName, String host, int port) {
         return String.format("%s-%s-%d", serviceName, host.replace(".", "-"), port);
     }
     
+    /**
+     * Updates the last heartbeat timestamp.
+     */
     public void updateHeartbeat() {
         this.lastHeartbeat = LocalDateTime.now();
     }
     
+    /**
+     * Checks if the service is healthy based on heartbeat.
+     * @return true if healthy, false otherwise
+     */
     public boolean isHealthy() {
         if (lastHeartbeat == null) return false;
         // Consider unhealthy if no heartbeat for 30 seconds

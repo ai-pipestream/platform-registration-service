@@ -53,7 +53,13 @@ public class ConfigSchema extends PanacheEntityBase {
     @Column(name = "sync_error")
     public String syncError;
     
-    // Factory method
+    /**
+     * Factory method to create a new ConfigSchema.
+     * @param serviceName the service name
+     * @param version the schema version
+     * @param jsonSchema the JSON schema string
+     * @return the created ConfigSchema
+     */
     public static ConfigSchema create(String serviceName, String version, String jsonSchema) {
         ConfigSchema schema = new ConfigSchema();
         schema.schemaId = generateSchemaId(serviceName, version);
@@ -63,10 +69,21 @@ public class ConfigSchema extends PanacheEntityBase {
         return schema;
     }
     
+    /**
+     * Generates a unique schema ID.
+     * @param serviceName the service name
+     * @param version the schema version
+     * @return the generated schema ID
+     */
     public static String generateSchemaId(String serviceName, String version) {
         return String.format("%s-v%s", serviceName, version.replace(".", "_"));
     }
     
+    /**
+     * Marks the schema as synced to Apicurio.
+     * @param artifactId the Apicurio artifact ID
+     * @param globalId the Apicurio global ID
+     */
     public void markSynced(String artifactId, Long globalId) {
         this.apicurioArtifactId = artifactId;
         this.apicurioGlobalId = globalId;
@@ -75,6 +92,10 @@ public class ConfigSchema extends PanacheEntityBase {
         this.syncError = null;
     }
     
+    /**
+     * Marks the schema sync as failed.
+     * @param error the error message
+     */
     public void markSyncFailed(String error) {
         this.syncStatus = SyncStatus.FAILED;
         this.lastSyncAttempt = LocalDateTime.now();

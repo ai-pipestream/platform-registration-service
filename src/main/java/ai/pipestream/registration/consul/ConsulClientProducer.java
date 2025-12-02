@@ -23,6 +23,10 @@ public class ConsulClientProducer {
     @ConfigProperty(name = "pipeline.consul.port", defaultValue = "8500")
     int consulPort;
     
+    /**
+     * Produces the ConsulClient bean for dependency injection.
+     * @return the configured ConsulClient
+     */
     @Produces
     @ApplicationScoped
     public ConsulClient produceConsulClient() {
