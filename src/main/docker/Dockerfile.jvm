@@ -78,21 +78,36 @@
 #   accessed directly. (example: "foo.example.com,bar.example.com")
 #
 ###
-FROM registry.access.redhat.com/ubi9/openjdk-21:1.21
+FROM registry.access.redhat.com/ubi9-minimal:9.5
 
-ENV LANGUAGE='en_US:en'
+# Install Java 21 runtime (headless for smaller size) and update CVEs
+RUN microdnf install -y \
+    java-21-openjdk-headless \
+    ca-certificates \
+    && microdnf update -y \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum
 
+ENV LANGUAGE='en_US:en' \
+    JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager" \
+    JAVA_APP_JAR="/deployments/quarkus-run.jar"
+
+# Create deployment directory
+RUN mkdir -p /deployments && chown -R 185:185 /deployments
 
 # We make four distinct layers so if there are application changes the library layers can be re-used
-COPY --chown=185 build/quarkus-app/lib/ /deployments/lib/
-COPY --chown=185 build/quarkus-app/*.jar /deployments/
-COPY --chown=185 build/quarkus-app/app/ /deployments/app/
-COPY --chown=185 build/quarkus-app/quarkus/ /deployments/quarkus/
+COPY --chown=185:185 build/quarkus-app/lib/ /deployments/lib/
+COPY --chown=185:185 build/quarkus-app/*.jar /deployments/
+COPY --chown=185:185 build/quarkus-app/app/ /deployments/app/
+COPY --chown=185:185 build/quarkus-app/quarkus/ /deployments/quarkus/
 
-EXPOSE 8080
+EXPOSE 8080 9000
 USER 185
-ENV JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager"
-ENV JAVA_APP_JAR="/deployments/quarkus-run.jar"
 
-ENTRYPOINT [ "/opt/jboss/container/java/run/run-java.sh" ]
+# Health check using gRPC health endpoint
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+    CMD timeout 2 bash -c '</dev/tcp/localhost/9000' || exit 1
+
+# Use exec form for proper signal handling
+ENTRYPOINT ["java", "-jar", "/deployments/quarkus-run.jar"]
 

@@ -1,5 +1,7 @@
 # Gradle
 .gradle
+.quarkus
+
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
@@ -59,3 +61,6 @@ CLAUDE.md
 
 # Auto-downloaded dev helpers
 .dev-helpers/
+
+# Generated proto files from Buf Registry
+src/main/proto/

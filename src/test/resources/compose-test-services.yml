@@ -1,0 +1,93 @@
+# Test infrastructure services for pipeline-messaging integration tests
+# Uses Redpanda (Kafka-compatible) and Apicurio Registry
+
+name: pipeline-kafka-test
+
+networks:
+  kafka-test-network:
+    driver: bridge
+
+volumes:
+  mysql_it_data:
+    driver: local
+
+services:
+  # MySQL instance for application data (not Apicurio)
+  mysql-test:
+    container_name: kafka-test-mysql
+    image: mysql:8.0
+    networks:
+      - kafka-test-network
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: pipeline
+      MYSQL_USER: pipeline
+      MYSQL_PASSWORD: password
+    command:
+      # Performance optimizations for test environment
+      - --innodb-flush-log-at-trx-commit=0
+      - --innodb-doublewrite=0
+      - --skip-log-bin
+      - --performance-schema=0
+      - --innodb-buffer-pool-size=256M
+    ports:
+      - "3308:3306"  # Changed from 3308 to avoid conflicts
+    volumes:
+      - mysql_it_data:/var/lib/mysql
+    labels:
+      quarkus-dev-service-mysql: kafka-test
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Redpanda for Kafka-compatible messaging
+  kafka-test:
+    container_name: kafka-test-redpanda
+    image: redpandadata/redpanda:latest
+    hostname: kafka-test
+    networks:
+      - kafka-test-network
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:9094
+      - --advertise-kafka-addr internal://kafka-test:9092,external://${DOCKER_GATEWAY_HOST:-172.17.0.1}:9095
+    ports:
+      - "9095:9094"
+    labels:
+      quarkus-dev-service-kafka: kafka-test
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+      start_period: 5s
+
+  # Apicurio Registry for protobuf schema management (in-memory for tests)
+  apicurio-registry-test:
+    container_name: kafka-test-apicurio
+    image: apicurio/apicurio-registry:3.1.4
+    networks:
+      - kafka-test-network
+    ports:
+      - "8082:8080"
+    environment:
+      QUARKUS_HTTP_PORT: 8080
+      QUARKUS_LOG_LEVEL: 'INFO'
+      LOG_LEVEL: 'INFO'
+      QUARKUS_HTTP_CORS_ORIGINS: '*'
+      QUARKUS_PROFILE: 'prod'
+    labels:
+      quarkus-dev-service-apicurio-registry: kafka-test
+      io.quarkus.devservices.compose.wait_for.logs: ".*Listening on.*"
+      io.quarkus.devservices.compose.config_map.8080: mp.messaging.connector.smallrye-kafka.apicurio.registry.url
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s

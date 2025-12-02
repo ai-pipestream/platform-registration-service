@@ -249,6 +249,20 @@ public class ModuleRepository {
     }
     
     /**
+     * Get all schema versions for a service name, ordered by version descending
+     */
+    public Uni<List<ConfigSchema>> findSchemaVersionsByServiceName(String serviceName) {
+        return sessionFactory.withSession(session ->
+            session.createQuery(
+                "FROM ConfigSchema WHERE serviceName = :serviceName ORDER BY schemaVersion DESC",
+                ConfigSchema.class
+            )
+            .setParameter("serviceName", serviceName)
+            .getResultList()
+        );
+    }
+
+    /**
      * Get all schemas needing sync to Apicurio
      */
     public Uni<List<ConfigSchema>> findSchemasNeedingSync() {

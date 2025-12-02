@@ -2,12 +2,12 @@ import org.apache.tools.ant.filters.ReplaceTokens
 import org.gradle.plugins.signing.Sign
 
 plugins {
-    id 'pl.allegro.tech.build.axion-release' version '1.21.0'
+    alias(libs.plugins.axion.release)
     alias(libs.plugins.java)
     alias(libs.plugins.quarkus)
     alias(libs.plugins.maven.publish)
     id 'signing'
-    id 'com.gradleup.nmcp' version '1.2.1'
+    alias(libs.plugins.nmcp)
 }
 
 scmVersion {
@@ -21,16 +21,64 @@ scmVersion {
     }
 }
 
-def pipelineBomVersion = findProperty('pipelineBomVersion') ?: '0.2.10-SNAPSHOT'
+// BOM version is defined in gradle.properties
+def pipestreamBomVersion = findProperty('pipestreamBomVersion')
+
+// 1. Define the export path
+def bufExportDir = layout.buildDirectory.dir("generated/buf-protos")
+
+// 2. The Sync Task
+tasks.register('syncProtos', Exec) {
+    group = 'protobuf'
+    description = 'Syncs proto definitions from Buf Registry'
+    commandLine 'buf', 'export', 'buf.build/pipestreamai/platform',
+            '--output', bufExportDir.get().asFile.path,
+            '--path', 'ai/pipestream/platform/registration/v1',
+            '--path', 'ai/pipestream/data/module/v1',
+            '--path', 'ai/pipestream/data/v1'
+    outputs.dir(bufExportDir)
+}
+// 3. Configure Quarkus to find the protos
+quarkus {
+    // Use 'proto-directory', not 'proto-source-path'
+    quarkusBuildProperties.put("quarkus.grpc.codegen.proto-directory", bufExportDir.get().asFile.path)
+    // Enable gRPC code generation scanning
+    quarkusBuildProperties.put("quarkus.grpc.codegen.enabled", "true")
+}
+
+// 4. CRITICAL: Fix Build Order & IDE Visibility
+sourceSets {
+    main {
+        java {
+            // Tell IntelliJ/Gradle where Quarkus puts the generated Java files
+            srcDir layout.buildDirectory.dir("classes/java/quarkus-generated-sources/grpc")
+        }
+    }
+}
+
+// 5. Hook into the correct Quarkus tasks
+// We must run syncProtos BEFORE Quarkus tries to generate code
+tasks.named('quarkusGenerateCode').configure {
+    dependsOn 'syncProtos'
+}
+tasks.named('quarkusGenerateCodeDev').configure {
+    dependsOn 'syncProtos'
+}
+tasks.named('quarkusGenerateCodeTests').configure {
+    dependsOn 'syncProtos'
+}
 
 dependencies {
-    implementation 'io.quarkus:quarkus-container-image-docker'
-    // Import pipeline BOM to align all managed versions
-    implementation platform("ai.pipestream:pipeline-bom:${pipelineBomVersion}")
+    // Import pipeline BOM to align all managed versions (dependency management only, no code coupling)
+    implementation platform("ai.pipestream:pipestream-bom:${pipestreamBomVersion}")
 
-    // Quarkus dependencies
+    // Quarkus dependencies - using TOML catalog for version management
     implementation libs.quarkus.grpc
     implementation libs.quarkus.arc
+    implementation libs.quarkus.cache
+    implementation libs.quarkus.vertx
+    implementation libs.quarkus.micrometer.registry.prometheus
+    implementation 'io.quarkus:quarkus-container-image-docker'
     implementation 'io.quarkus:quarkus-hibernate-reactive-panache'
     implementation 'io.quarkus:quarkus-hibernate-orm'
     implementation 'io.quarkus:quarkus-reactive-mysql-client'
@@ -38,32 +86,31 @@ dependencies {
     implementation 'io.quarkus:quarkus-flyway'
     implementation 'org.flywaydb:flyway-mysql'
     implementation 'io.quarkus:quarkus-smallrye-health'
-    implementation 'io.quarkus:quarkus-micrometer-registry-prometheus'
     implementation 'io.quarkus:quarkus-messaging-kafka'
-    implementation libs.apicurio.registry.protobuf.serde
 
     // Consul integration
     implementation 'io.smallrye.reactive:smallrye-mutiny-vertx-consul-client'
-    implementation 'io.quarkus:quarkus-vertx'
     implementation 'io.smallrye.stork:stork-service-discovery-consul'
 
-    // Apicurio Registry v3 client
+    // Quarkus Apicurio Registry Protobuf Extension (Zero-Config)
+    // Auto-detects Protobuf message types and configures serializers/deserializers
+    implementation libs.quarkus.apicurio.registry.protobuf
+
+    // Apicurio Registry v3 client (transitive from extension, but kept for explicit usage if needed)
     implementation libs.apicurio.registry.java.sdk
     implementation libs.apicurio.registry.common
 
-    // Pipestream libraries - versions managed entirely by the BOM/catalog
-    implementation libs.pipestream.compose.devservices
-    implementation libs.pipestream.grpc.stubs
-    implementation libs.pipestream.commons
-    implementation libs.pipestream.dynamic.grpc
+    // Pipestream libraries - using TOML catalog for version management
+    implementation libs.pipestream.devservices
 
-
-    // Testing
+    // Testing - using TOML catalog where available
     testImplementation libs.quarkus.junit5
-    testImplementation 'io.quarkus:quarkus-junit5-mockito'
+    testImplementation libs.quarkus.junit5.mockito
     testImplementation 'io.quarkus:quarkus-test-vertx'
     testImplementation 'org.testcontainers:mysql'
     testImplementation libs.rest.assured
+    testImplementation libs.wiremock.standalone
+    testImplementation libs.wiremock.grpc.extension.standalone
     runtimeOnly libs.quarkus.logging.manager
 }
 
@@ -183,8 +230,8 @@ publishing {
                     if (!existingBom) {
                         def bomDependency = depsNode.appendNode('dependency')
                         bomDependency.appendNode('groupId', 'ai.pipestream')
-                        bomDependency.appendNode('artifactId', 'pipeline-bom')
-                        bomDependency.appendNode('version', pipelineBomVersion)
+                        bomDependency.appendNode('artifactId', 'pipestream-bom')
+                        bomDependency.appendNode('version', pipestreamBomVersion)
                         bomDependency.appendNode('type', 'pom')
                         bomDependency.appendNode('scope', 'import')
                     }
@@ -238,5 +285,12 @@ nmcp {
         username = providers.environmentVariable("MAVEN_CENTRAL_USERNAME")
         password = providers.environmentVariable("MAVEN_CENTRAL_PASSWORD")
         publishingType = "AUTOMATIC"
+    }
+}
+
+// Fix sourcesJar dependency on generated code
+afterEvaluate {
+    tasks.named('sourcesJar', Jar) {
+        dependsOn 'quarkusGenerateCode'
     }
 }

@@ -1,7 +1,7 @@
 package ai.pipestream.registration.startup;
 
-import ai.pipestream.platform.registration.EventType;
-import ai.pipestream.platform.registration.ServiceRegistrationRequest;
+import ai.pipestream.platform.registration.v1.EventType;
+import ai.pipestream.platform.registration.v1.RegisterServiceRequest;
 import ai.pipestream.registration.handlers.ServiceRegistrationHandler;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -69,16 +69,16 @@ public class SelfRegistrationService {
 
         LOG.infof("Self-registering %s with Consul (local handler)", serviceName);
 
-        ServiceRegistrationRequest request = buildServiceRequest();
+        RegisterServiceRequest request = buildServiceRequest();
 
         serviceRegistrationHandler.registerService(request)
             .subscribe().with(
                 event -> {
                     LOG.infof("Self-registration event: %s - %s", event.getEventType(), event.getMessage());
 
-                    if (event.getEventType() == EventType.COMPLETED) {
+                    if (event.getEventType() == EventType.EVENT_TYPE_COMPLETED) {
                         LOG.infof("Successfully self-registered %s with Consul", serviceName);
-                    } else if (event.getEventType() == EventType.FAILED) {
+                    } else if (event.getEventType() == EventType.EVENT_TYPE_FAILED) {
                         LOG.errorf("Failed to self-register %s: %s", serviceName, event.getMessage());
                         if (event.hasErrorDetail()) {
                             LOG.error("Details: " + event.getErrorDetail());
@@ -93,8 +93,8 @@ public class SelfRegistrationService {
     /**
      * Build service registration request from configuration properties
      */
-    private ServiceRegistrationRequest buildServiceRequest() {
-        ServiceRegistrationRequest.Builder builder = ServiceRegistrationRequest.newBuilder()
+    private RegisterServiceRequest buildServiceRequest() {
+        RegisterServiceRequest.Builder builder = RegisterServiceRequest.newBuilder()
             .setServiceName(serviceName)
             .setHost(determineHost())
             .setPort(servicePort)

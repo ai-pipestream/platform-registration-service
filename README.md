@@ -274,33 +274,53 @@ curl http://localhost:8080/q/health/live
 curl http://localhost:8080/q/metrics
 ```
 
-### Docker Compose Example
+### Docker Integration Testing
 
-```yaml
-version: '3.8'
-services:
-  platform-registration-service:
-    image: platform-registration-service:latest
-    ports:
-      - "38101:8080"
-    environment:
-      - CONSUL_HOST=consul
-      - CONSUL_PORT=8500
-      - QUARKUS_PROFILE=prod
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - APICURIO_REGISTRY_URL=http://apicurio:8081/apis/registry/v3
-    depends_on:
-      - consul
-      - mysql
-      - kafka
-      - apicurio
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/q/health/ready"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+For containerized integration testing, use the centralized `docker-integration-tests` directory in the ai-pipestream monorepo. This provides shared infrastructure and service-specific overlays.
+
+**Prerequisites**:
+- Docker and Docker Compose installed
+- Access to the ai-pipestream monorepo
+
+**Start infrastructure and service**:
+```bash
+cd /path/to/ai-pipestream/docker-integration-tests
+
+# Start shared infrastructure (MySQL, Kafka, Consul, Apicurio, etc.)
+docker compose up -d
+
+# Start platform-registration-service with infrastructure
+docker compose -f docker-compose.yml \
+  -f services/platform-registration-service/docker-compose.yml \
+  -f services/platform-registration-service/docker-compose.snapshot.yml \
+  up -d platform-registration-service
+
+# View logs
+docker logs -f platform-registration-service
+
+# Check service health
+curl http://localhost:38201/platform-registration/q/health/ready
+
+# Run validation tests
+bash services/platform-registration-service/test.sh
 ```
+
+**Stop services**:
+```bash
+docker compose -f docker-compose.yml \
+  -f services/platform-registration-service/docker-compose.yml \
+  down
+
+# Remove volumes (clean slate)
+docker compose down -v
+```
+
+**Port Mapping**:
+- External: `38201` (avoids conflict with Quarkus dev mode on 38101)
+- Internal: `38101`
+- Context path: `/platform-registration`
+
+**Note**: For local development, use Quarkus Dev Services which automatically manages infrastructure.
 
 ## Development
 
@@ -579,4 +599,4 @@ docker run -d \
 4. Monitor pipeline completion
 5. Verify release in GitHub releases
 
-For complete deployment instructions, see [DOCKER_RUN.md](DOCKER_RUN.md) and [BUILD_DEPLOYMENT.md](BUILD_DEPLOYMENT.md).
+For complete deployment instructions, see [BUILD_DEPLOYMENT.md](BUILD_DEPLOYMENT.md).

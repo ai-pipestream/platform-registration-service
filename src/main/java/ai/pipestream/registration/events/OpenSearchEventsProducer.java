@@ -1,41 +1,39 @@
 package ai.pipestream.registration.events;
 
-import ai.pipestream.platform.registration.ModuleRegistered;
-import ai.pipestream.platform.registration.ServiceRegistered;
-import ai.pipestream.platform.registration.ModuleUnregistered;
-import ai.pipestream.platform.registration.ServiceUnregistered;
-import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata;
+import ai.pipestream.platform.registration.v1.ModuleRegistered;
+import ai.pipestream.platform.registration.v1.ServiceRegistered;
+import ai.pipestream.platform.registration.v1.ModuleUnregistered;
+import ai.pipestream.platform.registration.v1.ServiceUnregistered;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import io.smallrye.reactive.messaging.MutinyEmitter;
-import org.eclipse.microprofile.reactive.messaging.Message;
 import org.jboss.logging.Logger;
-import ai.pipestream.grpc.util.KafkaProtobufKeys;
 import com.google.protobuf.Timestamp;
-
-import java.util.UUID;
 
 /**
  * Produces events to Kafka for OpenSearch indexing.
  * Only emits on successful registration/unregistration.
- * Key: UUID
- * Value: Protobuf events
+ * Key: UUID (auto-configured by quarkus-apicurio-registry-protobuf extension)
+ * Value: Protobuf events (auto-serialized by extension)
  */
 @ApplicationScoped
 public class OpenSearchEventsProducer {
 
     private static final Logger LOG = Logger.getLogger(OpenSearchEventsProducer.class);
 
-    @Channel("opensearch-service-registered-events")
+    // The quarkus-apicurio-registry-protobuf extension auto-detects Protobuf types
+    // and configures ProtobufKafkaSerializer + UUIDSerializer automatically
+
+    @Channel("opensearch-service-registered-events-producer")
     MutinyEmitter<ServiceRegistered> serviceRegisteredEmitter;
 
-    @Channel("opensearch-service-unregistered-events")
+    @Channel("opensearch-service-unregistered-events-producer")
     MutinyEmitter<ServiceUnregistered> serviceUnregisteredEmitter;
 
-    @Channel("opensearch-module-registered-events")
+    @Channel("opensearch-module-registered-events-producer")
     MutinyEmitter<ModuleRegistered> moduleRegisteredEmitter;
 
-    @Channel("opensearch-module-unregistered-events")
+    @Channel("opensearch-module-unregistered-events-producer")
     MutinyEmitter<ModuleUnregistered> moduleUnregisteredEmitter;
 
     public void emitServiceRegistered(String serviceId, String serviceName, String host, int port, String version) {
@@ -48,14 +46,10 @@ public class OpenSearchEventsProducer {
                 .setVersion(version)
                 .setTimestamp(createTimestamp())
                 .build();
-            
-            UUID key = KafkaProtobufKeys.uuid(event);
-            OutgoingKafkaRecordMetadata<UUID> metadata = OutgoingKafkaRecordMetadata.<UUID>builder()
-                .withKey(key)
-                .build();
-            
-            serviceRegisteredEmitter.sendMessageAndForget(Message.of(event).addMetadata(metadata));
-            LOG.debugf("Emitted ServiceRegistered event for OpenSearch: serviceId=%s, key=%s", serviceId, key);
+
+            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
+            serviceRegisteredEmitter.send(event);
+            LOG.debugf("Emitted ServiceRegistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {
             LOG.warnf(e, "Failed to emit ServiceRegistered event for OpenSearch: %s", serviceId);
         }
@@ -68,20 +62,16 @@ public class OpenSearchEventsProducer {
                 .setServiceName(serviceName)
                 .setTimestamp(createTimestamp())
                 .build();
-            
-            UUID key = KafkaProtobufKeys.uuid(event);
-            OutgoingKafkaRecordMetadata<UUID> metadata = OutgoingKafkaRecordMetadata.<UUID>builder()
-                .withKey(key)
-                .build();
-            
-            serviceUnregisteredEmitter.sendMessageAndForget(Message.of(event).addMetadata(metadata));
-            LOG.debugf("Emitted ServiceUnregistered event for OpenSearch: serviceId=%s, key=%s", serviceId, key);
+
+            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
+            serviceUnregisteredEmitter.send(event);
+            LOG.debugf("Emitted ServiceUnregistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {
             LOG.warnf(e, "Failed to emit ServiceUnregistered event for OpenSearch: %s", serviceId);
         }
     }
 
-    public void emitModuleRegistered(String serviceId, String moduleName, String host, int port, 
+    public void emitModuleRegistered(String serviceId, String moduleName, String host, int port,
                                     String version, String schemaId, String apicurioArtifactId) {
         try {
             ModuleRegistered event = ModuleRegistered.newBuilder()
@@ -94,14 +84,10 @@ public class OpenSearchEventsProducer {
                 .setApicurioArtifactId(apicurioArtifactId)
                 .setTimestamp(createTimestamp())
                 .build();
-            
-            UUID key = KafkaProtobufKeys.uuid(event);
-            OutgoingKafkaRecordMetadata<UUID> metadata = OutgoingKafkaRecordMetadata.<UUID>builder()
-                .withKey(key)
-                .build();
-            
-            moduleRegisteredEmitter.sendMessageAndForget(Message.of(event).addMetadata(metadata));
-            LOG.debugf("Emitted ModuleRegistered event for OpenSearch: serviceId=%s, key=%s", serviceId, key);
+
+            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
+            moduleRegisteredEmitter.send(event);
+            LOG.debugf("Emitted ModuleRegistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {
             LOG.warnf(e, "Failed to emit ModuleRegistered event for OpenSearch: %s", serviceId);
         }
@@ -114,14 +100,10 @@ public class OpenSearchEventsProducer {
                 .setModuleName(moduleName)
                 .setTimestamp(createTimestamp())
                 .build();
-            
-            UUID key = KafkaProtobufKeys.uuid(event);
-            OutgoingKafkaRecordMetadata<UUID> metadata = OutgoingKafkaRecordMetadata.<UUID>builder()
-                .withKey(key)
-                .build();
-            
-            moduleUnregisteredEmitter.sendMessageAndForget(Message.of(event).addMetadata(metadata));
-            LOG.debugf("Emitted ModuleUnregistered event for OpenSearch: serviceId=%s, key=%s", serviceId, key);
+
+            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
+            moduleUnregisteredEmitter.send(event);
+            LOG.debugf("Emitted ModuleUnregistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {
             LOG.warnf(e, "Failed to emit ModuleUnregistered event for OpenSearch: %s", serviceId);
         }

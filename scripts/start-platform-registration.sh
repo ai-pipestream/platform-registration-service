@@ -113,4 +113,4 @@ print_status "info" "Press Ctrl+C to stop"
 echo
 
 # Start using the app's own gradlew
-./gradlew quarkusDev
+APICURIO_REGISTRY_URL=http://localhost:8081 ./gradlew quarkusDev

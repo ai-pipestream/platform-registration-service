@@ -24,16 +24,16 @@ public class ConsulHealthChecker {
     
     /**
      * Wait for a service to become healthy in Consul's view
+     * @param serviceName The Consul service name (used for health API query)
      * @param serviceId The full service ID (serviceName-host-port)
      * @return Uni<Boolean> true if service becomes healthy, false if timeout
      */
-    public Uni<Boolean> waitForHealthy(String serviceId) {
-        String serviceName = extractServiceName(serviceId);
-        if (serviceName == null) {
-            LOG.errorf("Invalid serviceId format: %s", serviceId);
+    public Uni<Boolean> waitForHealthy(String serviceName, String serviceId) {
+        if (serviceName == null || serviceName.isEmpty()) {
+            LOG.errorf("Service name is required for health check, serviceId: %s", serviceId);
             return Uni.createFrom().item(false);
         }
-        
+
         LOG.debugf("Waiting for health check - serviceId: %s, serviceName: %s", serviceId, serviceName);
         return checkHealthWithRetry(serviceName, serviceId, 0);
     }
@@ -80,21 +80,4 @@ public class ConsulHealthChecker {
             });
     }
     
-    /**
-     * Extract service name from serviceId (format: serviceName-host-port)
-     */
-    private String extractServiceName(String serviceId) {
-        int lastDash = serviceId.lastIndexOf('-');
-        if (lastDash == -1) {
-            return null;
-        }
-        
-        String withoutPort = serviceId.substring(0, lastDash);
-        int secondLastDash = withoutPort.lastIndexOf('-');
-        if (secondLastDash == -1) {
-            return null;
-        }
-        
-        return withoutPort.substring(0, secondLastDash);
-    }
 }

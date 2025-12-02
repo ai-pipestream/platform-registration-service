@@ -41,9 +41,25 @@ public class ApicurioRegistryClient {
     void init() {
         // Initialize the v3 client with VertX adapter
         this.requestAdapter = new VertXRequestAdapter(vertx.getDelegate());
-        this.requestAdapter.setBaseUrl(apicurioUrl + "/apis/registry/v3");
+
+        // Smart URL handling: accept both base URLs and full API endpoint URLs
+        String baseUrl;
+        if (apicurioUrl.endsWith("/apis/registry/v3")) {
+            // Already has the v3 endpoint path - use as-is
+            baseUrl = apicurioUrl;
+            LOG.infof("Apicurio Registry v3 client initialized with full URL: %s", baseUrl);
+        } else if (apicurioUrl.endsWith("/apis/registry/v3/")) {
+            // Has v3 endpoint with trailing slash - remove trailing slash
+            baseUrl = apicurioUrl.substring(0, apicurioUrl.length() - 1);
+            LOG.infof("Apicurio Registry v3 client initialized with full URL (trailing slash removed): %s", baseUrl);
+        } else {
+            // Base URL only - append the v3 API endpoint path
+            baseUrl = apicurioUrl + "/apis/registry/v3";
+            LOG.infof("Apicurio Registry v3 client initialized - appended /apis/registry/v3 to base URL: %s", baseUrl);
+        }
+
+        this.requestAdapter.setBaseUrl(baseUrl);
         this.registryClient = new RegistryClient(requestAdapter);
-        LOG.infof("Apicurio Registry v3 client initialized for: %s", apicurioUrl);
     }
 
     /**
@@ -104,7 +120,12 @@ public class ApicurioRegistryClient {
                 } catch (ClassNotFoundException cnf) {
                     LOG.errorf(e, "Failed to register schema for service %s:%s (artifactId=%s)", serviceName, version, artifactId);
                 }
-                throw new RuntimeException("Failed to register schema", e);
+                throw new ApicurioRegistryException(
+                    String.format("Failed to register schema for service %s:%s", serviceName, version),
+                    serviceName,
+                    artifactId,
+                    e
+                );
             }
         })
         .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());  // Run on worker thread pool
@@ -146,7 +167,12 @@ public class ApicurioRegistryClient {
                 }
             } catch (Exception e) {
                 LOG.errorf(e, "Failed to get schema for service %s", serviceName);
-                throw new RuntimeException("Failed to get schema", e);
+                throw new ApicurioRegistryException(
+                    String.format("Failed to get schema for service %s (version: %s)", serviceName, version),
+                    serviceName,
+                    artifactId,
+                    e
+                );
             }
         })
         .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());  // Run on worker thread pool
@@ -231,6 +257,7 @@ public class ApicurioRegistryClient {
 
     /**
      * Get artifact metadata
+     * Never returns null - returns a failed Uni if metadata cannot be retrieved.
      */
     public Uni<ArtifactMetaData> getArtifactMetadata(String serviceName) {
         String artifactId = serviceName + "-config";
@@ -248,7 +275,13 @@ public class ApicurioRegistryClient {
                 future.complete(metadata);
             } catch (Exception e) {
                 LOG.debugf("Failed to get metadata for artifact %s: %s", artifactId, e.getMessage());
-                future.complete(null);
+                ApicurioRegistryException exception = new ApicurioRegistryException(
+                    String.format("Failed to get metadata for artifact %s", artifactId),
+                    serviceName,
+                    artifactId,
+                    e
+                );
+                future.completeExceptionally(exception);
             }
 
             return future;
