@@ -1,6 +1,6 @@
 package ai.pipestream.platform.registration.client;
 
-import ai.pipestream.common.grpc.GrpcClientFactory;
+import ai.pipestream.quarkus.dynamicgrpc.GrpcClientFactory;
 import ai.pipestream.data.module.v1.MutinyPipeStepProcessorServiceGrpc;
 import ai.pipestream.platform.registration.v1.MutinyPlatformRegistrationServiceGrpc;
 import io.smallrye.mutiny.Uni;

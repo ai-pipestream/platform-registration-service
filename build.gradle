@@ -27,16 +27,31 @@ def pipestreamBomVersion = findProperty('pipestreamBomVersion')
 // 1. Define the export path
 def bufExportDir = layout.buildDirectory.dir("generated/buf-protos")
 
-// 2. The Sync Task
-tasks.register('syncProtos', Exec) {
+// 2. The Sync Tasks - export individual modules instead of non-existent 'platform' module
+tasks.register('syncRegistrationProtos', Exec) {
     group = 'protobuf'
-    description = 'Syncs proto definitions from Buf Registry'
-    commandLine 'buf', 'export', 'buf.build/pipestreamai/platform',
-            '--output', bufExportDir.get().asFile.path,
-            '--path', 'ai/pipestream/platform/registration/v1',
-            '--path', 'ai/pipestream/data/module/v1',
-            '--path', 'ai/pipestream/data/v1'
+    description = 'Exports registration proto files from Buf Registry'
+    commandLine 'buf', 'export', 'buf.build/pipestreamai/registration',
+            '--output', bufExportDir.get().asFile.path
     outputs.dir(bufExportDir)
+    doFirst {
+        bufExportDir.get().asFile.mkdirs()
+    }
+}
+
+tasks.register('syncModuleProtos', Exec) {
+    group = 'protobuf'
+    description = 'Exports pipeline-module proto files from Buf Registry'
+    commandLine 'buf', 'export', 'buf.build/pipestreamai/pipeline-module',
+            '--output', bufExportDir.get().asFile.path
+    outputs.dir(bufExportDir)
+    dependsOn 'syncRegistrationProtos'
+}
+
+tasks.register('syncProtos') {
+    group = 'protobuf'
+    description = 'Syncs all proto definitions from Buf Registry'
+    dependsOn 'syncModuleProtos'
 }
 // 3. Configure Quarkus to find the protos
 quarkus {
@@ -88,7 +103,13 @@ dependencies {
     implementation 'io.quarkus:quarkus-smallrye-health'
     implementation 'io.quarkus:quarkus-messaging-kafka'
 
+    // Quarkus Dynamic gRPC Extension (replaces local dynamic-grpc client implementation)
+    // Quarkus auto-resolves deployment module via extension metadata
+    implementation 'ai.pipestream:quarkus-dynamic-grpc:0.0.2-SNAPSHOT'
+
     // Consul integration
+    // Note: stork-service-discovery-consul is provided by the extension, but we may still need
+    // smallrye-mutiny-vertx-consul-client if used elsewhere in the service
     implementation 'io.smallrye.reactive:smallrye-mutiny-vertx-consul-client'
     implementation 'io.smallrye.stork:stork-service-discovery-consul'
 
