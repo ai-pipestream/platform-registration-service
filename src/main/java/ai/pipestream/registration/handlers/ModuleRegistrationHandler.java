@@ -1,7 +1,6 @@
 package ai.pipestream.registration.handlers;
 
 import com.google.protobuf.Timestamp;
-import ai.pipestream.data.module.v1.MutinyPipeStepProcessorServiceGrpc;
 import ai.pipestream.data.module.v1.GetServiceRegistrationRequest;
 import ai.pipestream.data.module.v1.GetServiceRegistrationResponse;
 import ai.pipestream.platform.registration.v1.*;
@@ -26,7 +25,7 @@ import java.util.Map;
 
 /**
  * Handles module registration operations with proper reactive flow.
- * Updated to use the new VerbNoun proto naming convention.
+ * Updated to use the unified RegisterRequest from the new proto API.
  */
 @ApplicationScoped
 public class ModuleRegistrationHandler {
@@ -53,26 +52,31 @@ public class ModuleRegistrationHandler {
 
     /**
      * Register a module with streaming status updates.
+     * Expects RegisterRequest with type=SERVICE_TYPE_MODULE.
      * Flow: Validate → Consul → Health → Fetch Metadata → Apicurio → Database → OpenSearch
-     * Returns Multi<RegistrationEvent> which PlatformRegistrationService wraps in RegisterModuleResponse.
+     * Returns Multi&lt;RegistrationEvent&gt; which PlatformRegistrationService wraps in RegisterResponse.
      */
-    public Multi<RegistrationEvent> registerModule(RegisterModuleRequest request) {
-        String serviceId = ConsulRegistrar.generateServiceId(request.getModuleName(), request.getHost(), request.getPort());
+    public Multi<RegistrationEvent> registerModule(RegisterRequest request) {
+        Connectivity connectivity = request.getConnectivity();
+        String host = connectivity.getAdvertisedHost();
+        int port = connectivity.getAdvertisedPort();
+        String moduleName = request.getName();
+        String serviceId = ConsulRegistrar.generateServiceId(moduleName, host, port);
 
         // Start with validation as a Uni
         return Uni.createFrom().item(() -> {
             if (!validateModuleRequest(request)) {
                 throw new IllegalArgumentException("Invalid module registration request: Missing required fields");
             }
-            return convertModuleToServiceRequest(request);
+            return request;
         })
-        .onItem().transformToMulti(serviceRequest -> {
+        .onItem().transformToMulti(validatedRequest -> {
             // Create a Multi that emits events throughout the registration process
             return Multi.createBy().concatenating()
                 .streams(
                     Multi.createFrom().item(createEvent(EventType.EVENT_TYPE_STARTED, "Starting module registration", serviceId)),
                     Multi.createFrom().item(createEvent(EventType.EVENT_TYPE_VALIDATED, "Module registration request validated", null)),
-                    executeModuleRegistrationAsMulti(request, serviceRequest, serviceId)
+                    executeModuleRegistrationAsMulti(validatedRequest, serviceId)
                 );
         })
         .onFailure().recoverWithMulti(error -> {
@@ -83,10 +87,8 @@ public class ModuleRegistrationHandler {
         });
     }
 
-    private Multi<RegistrationEvent> executeModuleRegistrationAsMulti(RegisterModuleRequest request,
-                                                                      RegisterServiceRequest serviceRequest,
-                                                                      String serviceId) {
-        return consulRegistrar.registerService(serviceRequest, serviceId)
+    private Multi<RegistrationEvent> executeModuleRegistrationAsMulti(RegisterRequest request, String serviceId) {
+        return consulRegistrar.registerService(request, serviceId)
             .onItem().transformToMulti(consulSuccess -> {
                 if (!consulSuccess) {
                     return Multi.createFrom().item(
@@ -102,8 +104,8 @@ public class ModuleRegistrationHandler {
             });
     }
 
-    private Multi<RegistrationEvent> continueRegistrationFlow(RegisterModuleRequest request, String serviceId) {
-        return healthChecker.waitForHealthy(request.getModuleName(), serviceId)
+    private Multi<RegistrationEvent> continueRegistrationFlow(RegisterRequest request, String serviceId) {
+        return healthChecker.waitForHealthy(request.getName(), serviceId)
             .onItem().transformToMulti(healthy -> {
                 if (!healthy) {
                     return rollbackConsulRegistration(serviceId)
@@ -120,10 +122,16 @@ public class ModuleRegistrationHandler {
             });
     }
 
-    private Multi<RegistrationEvent> completeRegistrationFlow(RegisterModuleRequest request, String serviceId) {
+    private Multi<RegistrationEvent> completeRegistrationFlow(RegisterRequest request, String serviceId) {
+        Connectivity connectivity = request.getConnectivity();
+        String host = connectivity.getAdvertisedHost();
+        int port = connectivity.getAdvertisedPort();
+        String moduleName = request.getName();
+        String version = request.getVersion();
+
         return fetchModuleMetadata(request)
             .chain(metadata -> {
-                String schema = extractOrSynthesizeSchema(metadata, request.getModuleName());
+                String schema = extractOrSynthesizeSchema(metadata, moduleName);
                 Map<String, Object> metadataMap = buildMetadataMap(metadata);
 
                 // Create a duplicated (safe) Vert.x context and switch the downstream onto it
@@ -138,10 +146,10 @@ public class ModuleRegistrationHandler {
                                 ctx != null, duplicated, Thread.currentThread().getName());
                     })
                     .chain(ignored -> moduleRepository.registerModule(
-                        request.getModuleName(),
-                        request.getHost(),
-                        request.getPort(),
-                        request.getVersion(),
+                        moduleName,
+                        host,
+                        port,
+                        version,
                         metadataMap,
                         schema
                     ))
@@ -150,14 +158,14 @@ public class ModuleRegistrationHandler {
             // After database is done, we can call Apicurio on worker thread
             .chain(dbContext -> {
                 return apicurioClient.createOrUpdateSchema(
-                        request.getModuleName(),
+                        moduleName,
                         request.getVersion(),
                         dbContext.schema
                     )
                     .map(schemaResult -> new SavedContext(dbContext.module, schemaResult))
                     .onFailure().recoverWithItem(err -> {
                         LOG.warnf(err, "Apicurio registration failed for %s:%s, continuing without registry sync",
-                                request.getModuleName(), request.getVersion());
+                                moduleName, request.getVersion());
                         return new SavedContext(dbContext.module, null);
                     });
             })
@@ -165,10 +173,10 @@ public class ModuleRegistrationHandler {
                 // Emit to OpenSearch (fire and forget)
                 openSearchProducer.emitModuleRegistered(
                     savedContext.module.serviceId,
-                    request.getModuleName(),
-                    request.getHost(),
-                    request.getPort(),
-                    request.getVersion(),
+                    moduleName,
+                    host,
+                    port,
+                    version,
                     savedContext.module.configSchemaId,
                     savedContext.schemaResult != null ? savedContext.schemaResult.getArtifactId() : null
                 );
@@ -211,21 +219,21 @@ public class ModuleRegistrationHandler {
 
 
     /**
-     * Unregister a module
+     * Unregister a module using the unified UnregisterRequest
      */
-    public Uni<UnregisterModuleResponse> unregisterModule(UnregisterModuleRequest request) {
-        String serviceId = ConsulRegistrar.generateServiceId(request.getModuleName(), request.getHost(), request.getPort());
+    public Uni<UnregisterResponse> unregisterModule(UnregisterRequest request) {
+        String serviceId = ConsulRegistrar.generateServiceId(request.getName(), request.getHost(), request.getPort());
 
         return consulRegistrar.unregisterService(serviceId)
             .map(success -> {
-                UnregisterModuleResponse.Builder response = UnregisterModuleResponse.newBuilder()
+                UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
                     .setSuccess(success)
                     .setTimestamp(createTimestamp());
 
                 if (success) {
                     response.setMessage("Module unregistered successfully");
                     // Emit to OpenSearch
-                    openSearchProducer.emitModuleUnregistered(serviceId, request.getModuleName());
+                    openSearchProducer.emitModuleUnregistered(serviceId, request.getName());
                 } else {
                     response.setMessage("Failed to unregister module");
                 }
@@ -234,8 +242,8 @@ public class ModuleRegistrationHandler {
             });
     }
 
-    private Uni<GetServiceRegistrationResponse> fetchModuleMetadata(RegisterModuleRequest request) {
-        String moduleName = request.getModuleName();
+    private Uni<GetServiceRegistrationResponse> fetchModuleMetadata(RegisterRequest request) {
+        String moduleName = request.getName();
         return grpcClients.getPipeStepProcessorClient(moduleName)
             .onItem().transformToUni(stub ->
                 stub.getServiceRegistration(GetServiceRegistrationRequest.newBuilder().build())
@@ -252,46 +260,6 @@ public class ModuleRegistrationHandler {
                 }
             })
             .replaceWith(Uni.createFrom().voidItem());
-    }
-
-    private Uni<Void> rollbackApicurioSchema(String moduleName, String version) {
-        // TODO: Implement if Apicurio supports deletion
-        LOG.warnf("Apicurio schema rollback not implemented for %s:%s", moduleName, version);
-        return Uni.createFrom().voidItem();
-    }
-
-    private RegisterServiceRequest convertModuleToServiceRequest(RegisterModuleRequest moduleRequest) {
-        RegisterServiceRequest.Builder builder = RegisterServiceRequest.newBuilder()
-            .setServiceName(moduleRequest.getModuleName())
-            .setHost(moduleRequest.getHost())
-            .setPort(moduleRequest.getPort())
-            .setVersion(moduleRequest.getVersion())
-            .putAllMetadata(moduleRequest.getMetadataMap())
-            .addTags("module")
-            .addTags("document-processor")
-            .addCapabilities("PipeStepProcessor");
-
-        // Add module metadata if present
-        if (moduleRequest.hasServiceRegistrationMetadata()) {
-            var metadata = moduleRequest.getServiceRegistrationMetadata();
-
-            builder.putMetadata("module-name", metadata.getModuleName());
-            builder.putMetadata("module-version", metadata.getVersion());
-
-            if (metadata.hasJsonConfigSchema()) {
-                builder.putMetadata("json-config-schema", metadata.getJsonConfigSchema());
-            }
-            if (metadata.hasDisplayName()) {
-                builder.putMetadata("display-name", metadata.getDisplayName());
-            }
-            if (metadata.hasDescription()) {
-                builder.putMetadata("description", metadata.getDescription());
-            }
-
-            builder.addAllTags(metadata.getTagsList());
-        }
-
-        return builder.build();
     }
 
     private String extractOrSynthesizeSchema(GetServiceRegistrationResponse metadata, String moduleName) {
@@ -329,10 +297,15 @@ public class ModuleRegistrationHandler {
         return map;
     }
 
-    private boolean validateModuleRequest(RegisterModuleRequest request) {
-        return !request.getModuleName().isEmpty() &&
-               !request.getHost().isEmpty() &&
-               request.getPort() > 0;
+    private boolean validateModuleRequest(RegisterRequest request) {
+        if (request.getName().isEmpty()) {
+            return false;
+        }
+        if (!request.hasConnectivity()) {
+            return false;
+        }
+        Connectivity conn = request.getConnectivity();
+        return !conn.getAdvertisedHost().isEmpty() && conn.getAdvertisedPort() > 0;
     }
 
     private RegistrationEvent createEvent(EventType type, String message, String serviceId) {

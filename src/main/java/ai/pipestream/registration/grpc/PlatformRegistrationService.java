@@ -15,7 +15,7 @@ import org.jboss.logging.Logger;
 
 /**
  * Main platform registration service implementation.
- * Updated to match the new 'VerbNoun' naming convention.
+ * Updated to use the unified Register/Unregister API from the new proto definition.
  */
 @GrpcService
 public class PlatformRegistrationService extends MutinyPlatformRegistrationServiceGrpc.PlatformRegistrationServiceImplBase {
@@ -34,53 +34,68 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
     @Inject
     SchemaRetrievalHandler schemaRetrievalHandler;
 
-    @Override
-    public Multi<RegisterServiceResponse> registerService(RegisterServiceRequest request) {
-        LOG.infof("Received service registration request for: %s", request.getServiceName());
-        // WRAPPER: The proto now expects a RegisterServiceResponse, not a raw RegistrationEvent
-        return serviceRegistrationHandler.registerService(request)
-                .map(event -> RegisterServiceResponse.newBuilder().setEvent(event).build());
-    }
-
+    /**
+     * Unified registration method - routes based on ServiceType.
+     * Replaces the old separate registerService/registerModule methods.
+     */
     @Blocking
     @Override
-    public Multi<RegisterModuleResponse> registerModule(RegisterModuleRequest request) {
-        LOG.infof("Received module registration request for: %s", request.getModuleName());
-        // WRAPPER: The proto now expects a RegisterModuleResponse
-        return moduleRegistrationHandler.registerModule(request)
-                .map(event -> RegisterModuleResponse.newBuilder().setEvent(event).build());
+    public Multi<RegisterResponse> register(RegisterRequest request) {
+        ServiceType type = request.getType();
+        LOG.infof("Received registration request for: %s (type=%s)", request.getName(), type);
+
+        Multi<RegistrationEvent> events;
+        
+        switch (type) {
+            case SERVICE_TYPE_SERVICE:
+                events = serviceRegistrationHandler.registerService(request);
+                break;
+            case SERVICE_TYPE_MODULE:
+                events = moduleRegistrationHandler.registerModule(request);
+                break;
+            case SERVICE_TYPE_UNSPECIFIED:
+            case UNRECOGNIZED:
+            default:
+                LOG.errorf("Invalid service type: %s", type);
+                return Multi.createFrom().failure(
+                    new IllegalArgumentException("Must specify service type: SERVICE_TYPE_SERVICE or SERVICE_TYPE_MODULE"));
+        }
+        
+        // Wrap RegistrationEvent in RegisterResponse
+        return events.map(event -> RegisterResponse.newBuilder().setEvent(event).build());
     }
 
+    /**
+     * Unified unregistration method.
+     * Replaces the old separate unregisterService/unregisterModule methods.
+     * Routes to appropriate handler based on looking up the service in Consul.
+     * For simplicity, we try service unregistration first.
+     */
     @Override
-    public Uni<UnregisterServiceResponse> unregisterService(UnregisterServiceRequest request) {
-        LOG.infof("Received service unregistration request for: %s", request.getServiceName());
+    public Uni<UnregisterResponse> unregister(UnregisterRequest request) {
+        LOG.infof("Received unregistration request for: %s at %s:%d", 
+            request.getName(), request.getHost(), request.getPort());
+        
+        // Both handlers now use the same ConsulRegistrar.unregisterService method
+        // and return the same UnregisterResponse type, so we can use either handler.
+        // Using serviceRegistrationHandler as the primary (it's simpler).
         return serviceRegistrationHandler.unregisterService(request);
     }
 
     @Override
-    public Uni<UnregisterModuleResponse> unregisterModule(UnregisterModuleRequest request) {
-        LOG.infof("Received module unregistration request for: %s", request.getModuleName());
-        return moduleRegistrationHandler.unregisterModule(request);
-    }
-
-    @Override
     public Uni<ListServicesResponse> listServices(ListServicesRequest request) {
-        // RENAMED: Empty -> ListServicesRequest
-        // RENAMED: ServiceListResponse -> ListServicesResponse
         LOG.debug("Received request to list all services");
         return discoveryHandler.listServices();
     }
 
     @Override
     public Uni<ListModulesResponse> listModules(ListModulesRequest request) {
-        // RENAMED: ModuleListResponse -> ListModulesResponse
         LOG.debug("Received request to list all modules");
         return discoveryHandler.listModules();
     }
 
     @Override
     public Uni<GetServiceResponse> getService(GetServiceRequest request) {
-        // HANDLE ONEOF: The proto now uses a 'oneof' for ID vs Name
         if (request.hasServiceName()) {
             LOG.debugf("Looking up service by name: %s", request.getServiceName());
             return discoveryHandler.getServiceByName(request.getServiceName());
@@ -107,7 +122,6 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
 
     @Override
     public Uni<ResolveServiceResponse> resolveService(ResolveServiceRequest request) {
-        // RENAMED: ServiceResolveResponse -> ResolveServiceResponse
         LOG.infof("Resolving service: %s (prefer_local=%s)",
                 request.getServiceName(), request.getPreferLocal());
         return discoveryHandler.resolveService(request);
@@ -127,14 +141,12 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
 
     @Override
     public Uni<GetModuleSchemaResponse> getModuleSchema(GetModuleSchemaRequest request) {
-        // RENAMED: ModuleSchemaResponse -> GetModuleSchemaResponse
         LOG.infof("Getting schema for: %s", request.getModuleName());
         return schemaRetrievalHandler.getModuleSchema(request);
     }
 
     @Override
     public Uni<GetModuleSchemaVersionsResponse> getModuleSchemaVersions(GetModuleSchemaVersionsRequest request) {
-        // NEW METHOD in v1 proto
         LOG.infof("Listing schema versions for: %s", request.getModuleName());
         return schemaRetrievalHandler.getModuleSchemaVersions(request);
     }

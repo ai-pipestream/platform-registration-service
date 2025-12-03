@@ -1,7 +1,9 @@
 package ai.pipestream.registration.startup;
 
+import ai.pipestream.platform.registration.v1.Connectivity;
 import ai.pipestream.platform.registration.v1.EventType;
-import ai.pipestream.platform.registration.v1.RegisterServiceRequest;
+import ai.pipestream.platform.registration.v1.RegisterRequest;
+import ai.pipestream.platform.registration.v1.ServiceType;
 import ai.pipestream.registration.handlers.ServiceRegistrationHandler;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -69,7 +71,7 @@ public class SelfRegistrationService {
 
         LOG.infof("Self-registering %s with Consul (local handler)", serviceName);
 
-        RegisterServiceRequest request = buildServiceRequest();
+        RegisterRequest request = buildRegisterRequest();
 
         serviceRegistrationHandler.registerService(request)
             .subscribe().with(
@@ -91,13 +93,20 @@ public class SelfRegistrationService {
     }
 
     /**
-     * Build service registration request from configuration properties
+     * Build registration request from configuration properties.
+     * Uses the unified RegisterRequest with type=SERVICE_TYPE_SERVICE.
      */
-    private RegisterServiceRequest buildServiceRequest() {
-        RegisterServiceRequest.Builder builder = RegisterServiceRequest.newBuilder()
-            .setServiceName(serviceName)
-            .setHost(determineHost())
-            .setPort(servicePort)
+    private RegisterRequest buildRegisterRequest() {
+        // Build connectivity information
+        Connectivity connectivity = Connectivity.newBuilder()
+            .setAdvertisedHost(determineHost())
+            .setAdvertisedPort(servicePort)
+            .build();
+
+        RegisterRequest.Builder builder = RegisterRequest.newBuilder()
+            .setName(serviceName)
+            .setType(ServiceType.SERVICE_TYPE_SERVICE)
+            .setConnectivity(connectivity)
             .setVersion(version);
 
         // Add metadata

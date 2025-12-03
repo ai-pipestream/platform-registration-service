@@ -13,7 +13,7 @@ import org.jboss.logging.Logger;
 
 /**
  * Handles service registration operations.
- * Updated to use the new VerbNoun proto naming convention.
+ * Updated to use the unified RegisterRequest from the new proto API.
  */
 @ApplicationScoped
 public class ServiceRegistrationHandler {
@@ -31,10 +31,14 @@ public class ServiceRegistrationHandler {
 
     /**
      * Register a service with streaming status updates.
-     * Returns Multi<RegistrationEvent> which PlatformRegistrationService wraps in RegisterServiceResponse.
+     * Expects RegisterRequest with type=SERVICE_TYPE_SERVICE.
+     * Returns Multi&lt;RegistrationEvent&gt; which PlatformRegistrationService wraps in RegisterResponse.
      */
-    public Multi<RegistrationEvent> registerService(RegisterServiceRequest request) {
-        String serviceId = ConsulRegistrar.generateServiceId(request.getServiceName(), request.getHost(), request.getPort());
+    public Multi<RegistrationEvent> registerService(RegisterRequest request) {
+        Connectivity connectivity = request.getConnectivity();
+        String host = connectivity.getAdvertisedHost();
+        int port = connectivity.getAdvertisedPort();
+        String serviceId = ConsulRegistrar.generateServiceId(request.getName(), host, port);
 
         return Multi.createFrom().emitter(emitter -> {
             // Emit STARTED event
@@ -64,7 +68,7 @@ public class ServiceRegistrationHandler {
                     emitter.emit(createEvent(EventType.EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
 
                     // Wait for health check
-                    return healthChecker.waitForHealthy(request.getServiceName(), serviceId)
+                    return healthChecker.waitForHealthy(request.getName(), serviceId)
                         .onItem().invoke(healthy -> {
                             if (healthy) {
                                 emitter.emit(createEvent(EventType.EVENT_TYPE_CONSUL_HEALTHY, "Service reported healthy by Consul", null));
@@ -72,8 +76,8 @@ public class ServiceRegistrationHandler {
                                 emitter.emit(completed);
 
                                 // Emit to OpenSearch on success
-                                openSearchProducer.emitServiceRegistered(serviceId, request.getServiceName(),
-                                    request.getHost(), request.getPort(), request.getVersion());
+                                openSearchProducer.emitServiceRegistered(serviceId, request.getName(),
+                                    host, port, request.getVersion());
                             } else {
                                 // Service registered but never became healthy
                                 RegistrationEvent failed = createEventWithError(serviceId, "Service registered but failed health checks",
@@ -103,21 +107,21 @@ public class ServiceRegistrationHandler {
     }
 
     /**
-     * Unregister a service
+     * Unregister a service using the unified UnregisterRequest
      */
-    public Uni<UnregisterServiceResponse> unregisterService(UnregisterServiceRequest request) {
-        String serviceId = ConsulRegistrar.generateServiceId(request.getServiceName(), request.getHost(), request.getPort());
+    public Uni<UnregisterResponse> unregisterService(UnregisterRequest request) {
+        String serviceId = ConsulRegistrar.generateServiceId(request.getName(), request.getHost(), request.getPort());
 
         return consulRegistrar.unregisterService(serviceId)
             .map(success -> {
-                UnregisterServiceResponse.Builder response = UnregisterServiceResponse.newBuilder()
+                UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
                     .setSuccess(success)
                     .setTimestamp(createTimestamp());
 
                 if (success) {
                     response.setMessage("Service unregistered successfully");
                     // Emit to OpenSearch
-                    openSearchProducer.emitServiceUnregistered(serviceId, request.getServiceName());
+                    openSearchProducer.emitServiceUnregistered(serviceId, request.getName());
                 } else {
                     response.setMessage("Failed to unregister service");
                 }
@@ -126,10 +130,15 @@ public class ServiceRegistrationHandler {
             });
     }
 
-    private boolean validateServiceRequest(RegisterServiceRequest request) {
-        return !request.getServiceName().isEmpty() &&
-               !request.getHost().isEmpty() &&
-               request.getPort() > 0;
+    private boolean validateServiceRequest(RegisterRequest request) {
+        if (request.getName().isEmpty()) {
+            return false;
+        }
+        if (!request.hasConnectivity()) {
+            return false;
+        }
+        Connectivity conn = request.getConnectivity();
+        return !conn.getAdvertisedHost().isEmpty() && conn.getAdvertisedPort() > 0;
     }
 
     private RegistrationEvent createEvent(EventType type, String message, String serviceId) {
