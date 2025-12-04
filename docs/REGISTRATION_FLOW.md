@@ -2,13 +2,13 @@
 
 ## Overview
 
-The Piplestream AI Platform is language agnoistic, so the quarkus features that enable gRPC services to be dynamically discovered and registered with Consul are not available.  Instead, we use a gRPC gateway to route requests based on the `ServiceType` field.  This document describes the registration flow for both services and modules.
+The Pipestream AI Platform is language agnostic, so the Quarkus features that enable gRPC services to be dynamically discovered and registered with Consul are not available. Instead, we use a gRPC gateway to route requests based on the `ServiceType` field. This document describes the registration flow for both services and modules.
 
-Given the the module API is 100% grpc and language ignostic, the platform also requires a way to register these services with Consul and register module schemas with Apicurio Registry.
+Given that the module API is 100% gRPC and language agnostic, the platform also requires a way to register these services with Consul and register module schemas with Apicurio Registry.
 
 However, forcing developers to create integrations with Consul and Apicurio Registry is not ideal.  Instead, we want to provide a unified API for registering both services and modules with the platform.  This way, a developer only needs to create 2 functions to create a full pipeline without any additional integrations.   Everything is pure gRPC and the platform handles the rest.
 
-The Platform Registration Service provides a **unified API** for registering both services and modules with the platform. The API uses a single `Register` RPC that routes internally based on the `ServiceType` field to differentiate between services and modules.  The `Register` RPC returns a stream of `RegisterResponse` events that provide real-time progress and error messages..
+The Platform Registration Service provides a **unified API** for registering both services and modules with the platform. The API uses a single `Register` RPC that routes internally based on the `ServiceType` field to differentiate between services and modules. The `Register` RPC returns a stream of `RegisterResponse` events that provide real-time progress and error messages.
 
 ## Proto API
 
@@ -325,9 +325,9 @@ flowchart TB
 | `ModuleRegistrationHandler` | Module registration logic with callback |
 | `ConsulRegistrar` | Consul service registration |
 | `ConsulHealthChecker` | Wait for service health |
-| `ModuleRepository` | MySQL persistence |
+| `ModuleRepository` | MySQL persistence for module metadata |
 | `ApicurioRegistryClient` | Schema registry operations |
-| `RegistrationGrpcClients` | Dynamic gRPC client for callbacks |
+| `RegistrationGrpcClients` | Dynamic gRPC client for module callbacks |
 | `OpenSearchEventsProducer` | Kafka event emission |
 
 ## Key Design Decisions

@@ -15,11 +15,11 @@ The service uses Quarkus `container-image-docker` extension to build Docker imag
 
 This will:
 1. Compile the application
-2. Create the `quarkus-app/` build output
+2. Create the `build/quarkus-app/` build output
 3. Build a Docker image using `src/main/docker/Dockerfile.jvm`
 4. Tag the image as:
    - `ghcr.io/ai-pipestream/platform-registration-service:latest`
-   - `ghcr.io/ai-pipestream/platform-registration-service:1.0.0`
+   - `ghcr.io/ai-pipestream/platform-registration-service:{version}` (where version is the current project version)
 
 ### Build and Push to Registry
 ```bash
@@ -58,7 +58,10 @@ Quarkus provides multiple Dockerfiles in `src/main/docker/`:
 docker pull ghcr.io/ai-pipestream/platform-registration-service:latest
 docker run -p 38101:8080 \
   -e CONSUL_HOST=consul \
-  -e MYSQL_HOST=mysql \
+  -e CONSUL_PORT=8500 \
+  -e QUARKUS_DATASOURCE_JDBC_URL=jdbc:mysql://mysql:3306/pipeline_registry \
+  -e QUARKUS_DATASOURCE_USERNAME=registration_user \
+  -e QUARKUS_DATASOURCE_PASSWORD=password \
   ghcr.io/ai-pipestream/platform-registration-service:latest
 ```
 

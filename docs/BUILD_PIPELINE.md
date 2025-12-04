@@ -186,7 +186,7 @@ Copy these workflow files to `.github/workflows/`:
 
 https://raw.githubusercontent.com/ai-pipestream/platform-registration-service/refs/heads/main/.github/workflows/build-and-publish.yml
 
-(this is from the platfrom-registration-service, adjust as needed)
+(This is from the platform-registration-service, adjust as needed)
 
 #### `release-and-publish.yml`
 - Triggers on: manual workflow dispatch
@@ -195,7 +195,7 @@ https://raw.githubusercontent.com/ai-pipestream/platform-registration-service/re
 
 https://raw.githubusercontent.com/ai-pipestream/platform-registration-service/refs/heads/main/.github/workflows/release-and-publish.yml
 
-(this is from the platfrom-registration-service, adjust as needed)
+(This is from the platform-registration-service, adjust as needed)
 
 
 #### `dockerhub-publish.yml`
@@ -205,7 +205,7 @@ https://raw.githubusercontent.com/ai-pipestream/platform-registration-service/re
 
 https://raw.githubusercontent.com/ai-pipestream/platform-registration-service/refs/heads/main/.github/workflows/dockerhub-publish.yml
 
-(this is from the platfrom-registration-service, adjust as needed)
+(This is from the platform-registration-service, adjust as needed)
 
 ### 3. Customization Checklist
 

@@ -141,10 +141,10 @@ CREATE TABLE config_schemas (
 
 ### Clone & Build
 ```bash
-git clone https://github.com/io-pipeline/platform-registration-service.git
+git clone https://github.com/ai-pipestream/platform-registration-service.git
 cd platform-registration-service
 
-# Configure GitHub Packages credentials
+# Configure GitHub Packages credentials (optional, for faster dependency resolution)
 export GITHUB_ACTOR=your-github-username
 export GITHUB_TOKEN=your-personal-access-token
 
@@ -194,14 +194,11 @@ docker run -p 38101:8080 platform-registration-service:local
 **1. Build the Application**
 ```bash
 # From the project root
-./gradlew :applications:platform-registration-service:build
+./gradlew build
 ```
 
 **2. Build Docker Image**
 ```bash
-# Navigate to the service directory
-cd applications/platform-registration-service
-
 # Build the Docker image
 docker build -f src/main/docker/Dockerfile.jvm -t platform-registration-service:latest .
 ```
@@ -334,20 +331,20 @@ docker compose down -v
 
 **Start Dependencies**:
 ```bash
-# Start infrastructure services
-./scripts/start-infrastructure.sh
+# Start infrastructure services using the startup script
+./scripts/start-platform-registration.sh
 ```
 
 **Run in Development Mode**:
 ```bash
 # Start the service in Quarkus dev mode
-./gradlew :applications:platform-registration-service:quarkusDev
+./gradlew quarkusDev
 ```
 
 **Frontend Development**:
 ```bash
 # Install dependencies
-cd applications/platform-registration-service/src/main/ui-vue
+cd src/main/ui-vue
 pnpm install
 
 # Start development server
@@ -359,10 +356,10 @@ pnpm run dev
 **Run Tests**:
 ```bash
 # Run all tests
-./gradlew :applications:platform-registration-service:test
+./gradlew test
 
 # Run specific test class
-./gradlew :applications:platform-registration-service:test --tests "io.pipeline.registration.handlers.*Test"
+./gradlew test --tests "ai.pipestream.registration.handlers.*Test"
 ```
 
 **Integration Testing**:
@@ -547,7 +544,7 @@ docker run -e JAVA_DEBUG=true -e JAVA_DEBUG_PORT=*:5005 -p 5005:5005 platform-re
 ### Code Style
 - Java 21 with Quarkus reactive programming
 - 4-space indentation
-- Package naming: `io.pipeline.registration.*`
+- Package naming: `ai.pipestream.registration.*`
 - Class naming: PascalCase
 - Method/field naming: camelCase
 
@@ -579,8 +576,8 @@ For detailed information about building, versioning, and deploying this service,
 # Build and test
 ./gradlew clean build test
 
-# Run locally
-./gradlew quarkus:dev
+# Run locally in dev mode
+./gradlew quarkusDev
 ```
 
 #### Docker Deployment
