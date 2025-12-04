@@ -257,6 +257,9 @@ jobs:
           token: ${{ secrets.BUF_TOKEN }}
           setup_only: true
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -267,19 +270,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build application
         env:
           GRADLE_OPTS: -Xmx2048m -XX:MaxMetaspaceSize=512m
-        run: |
-          ./gradlew clean build -x test \
-            -Dquarkus.container-image.build=true \
-            -Dquarkus.container-image.push=true \
-            -Dquarkus.container-image.registry=ghcr.io \
-            -Dquarkus.container-image.group=ai-pipestream \
-            -Dquarkus.container-image.name=platform-registration-service \
-            -Dquarkus.container-image.tag=${{ needs.release.outputs.version }} \
-            -Dquarkus.container-image.additional-tags=latest \
-            --no-daemon
+        run: ./gradlew clean build -x test --no-daemon
+
+      - name: Build and push multi-arch Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: src/main/docker/Dockerfile.jvm
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: true
+          tags: |
+            ghcr.io/ai-pipestream/platform-registration-service:${{ needs.release.outputs.version }}
+            ghcr.io/ai-pipestream/platform-registration-service:latest
 
       - name: Trigger Docker Hub publish
         if: success()

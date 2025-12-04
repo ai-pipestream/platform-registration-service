@@ -114,6 +114,8 @@ if [[ "$MULTIARCH" == "true" ]]; then
 
   docker buildx build \
     --platform linux/amd64,linux/arm64 \
+    --sbom=true \
+    --provenance=true \
     -f src/main/docker/Dockerfile.jvm \
     -t "${REGISTRY_URL}ai-pipestream/platform-registration-service:latest" \
     $PUSH_FLAG \
