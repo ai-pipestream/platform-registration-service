@@ -44,6 +44,7 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GRADLE_OPTS: -Xmx2048m -XX:MaxMetaspaceSize=512m
         run: ./gradlew clean build test --no-daemon --refresh-dependencies
 
       - name: Upload test results
@@ -104,12 +105,14 @@ jobs:
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GRADLE_OPTS: -Xmx2048m -XX:MaxMetaspaceSize=512m
         run: ./gradlew publishAllPublicationsToCentralPortalSnapshots --no-daemon --stacktrace
 
       - name: Publish snapshots to GitHub Packages
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GRADLE_OPTS: -Xmx2048m -XX:MaxMetaspaceSize=512m
         run: ./gradlew publish -PskipCentral=true --no-daemon --stacktrace
 
   docker-snapshot:
@@ -161,6 +164,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push snapshot Docker image
+        env:
+          GRADLE_OPTS: -Xmx2048m -XX:MaxMetaspaceSize=512m
         run: |
           ./gradlew clean build -x test \
             -Dquarkus.container-image.build=true \
