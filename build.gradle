@@ -222,30 +222,31 @@ publishing {
                 // This ensures Maven Central can resolve dependency versions from the BOM
                 withXml {
                     def projectNode = asNode()
-                    def dependencyManagementNodes = projectNode.get('dependencyManagement')
-                    def dmNode
-                    def depsNode
                     
-                    if (dependencyManagementNodes.isEmpty()) {
-                        // Create dependencyManagement and dependencies nodes
+                    // Get or create dependencyManagement node
+                    def dmNodes = projectNode.dependencyManagement
+                    def dmNode
+                    if (dmNodes == null || dmNodes.isEmpty()) {
                         dmNode = projectNode.appendNode('dependencyManagement')
+                    } else {
+                        // Handle both NodeList and single Node cases
+                        dmNode = dmNodes instanceof groovy.util.NodeList ? dmNodes[0] : dmNodes
+                    }
+                    
+                    // Get or create dependencies node within dependencyManagement
+                    def depsNodes = dmNode.dependencies
+                    def depsNode
+                    if (depsNodes == null || depsNodes.isEmpty()) {
                         depsNode = dmNode.appendNode('dependencies')
                     } else {
-                        // Get the first dependencyManagement node
-                        dmNode = dependencyManagementNodes[0 as String]
-                        // Check if it has a dependencies child
-                        def dependenciesNodes = dmNode.get('dependencies')
-                        if (dependenciesNodes.isEmpty()) {
-                            depsNode = dmNode.appendNode('dependencies')
-                        } else {
-                            depsNode = dependenciesNodes[0 as String]
-                        }
+                        // Handle both NodeList and single Node cases
+                        depsNode = depsNodes instanceof groovy.util.NodeList ? depsNodes[0] : depsNodes
                     }
                     
                     // Check if pipeline-bom already exists
                     def existingBom = depsNode.children().find { dep ->
                         dep.groupId?.text() == 'ai.pipestream' && 
-                        dep.artifactId?.text() == 'pipeline-bom'
+                        dep.artifactId?.text() == 'pipestream-bom'
                     }
                     
                     if (!existingBom) {
