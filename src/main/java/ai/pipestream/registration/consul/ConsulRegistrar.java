@@ -12,6 +12,7 @@ import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Handles service registration and unregistration with Consul.
@@ -34,35 +35,49 @@ public class ConsulRegistrar {
      */
     public Uni<Boolean> registerService(RegisterRequest request, String serviceId) {
         Connectivity connectivity = request.getConnectivity();
-        String host = connectivity.getAdvertisedHost();
-        int port = connectivity.getAdvertisedPort();
+        
+        // Use internal host/port for Consul service address (what Consul uses to reach the service)
+        // Fall back to advertised if internal is not specified
+        // This is critical for Docker environments where Consul needs to reach the service
+        // via the Docker bridge network (e.g., 172.17.0.1) rather than host.docker.internal
+        String consulHost = connectivity.hasInternalHost() 
+                ? connectivity.getInternalHost() 
+                : connectivity.getAdvertisedHost();
+        int consulPort = connectivity.hasInternalPort() 
+                ? connectivity.getInternalPort() 
+                : connectivity.getAdvertisedPort();
+        
+        // Sanitize metadata keys (Consul doesn't allow dots in metadata keys)
+        Map<String, String> sanitizedMetadata = sanitizeMetadataKeys(request.getMetadataMap());
+        
+        // Store advertised address in metadata for client discovery
+        // Clients should use advertised-host/port, not the internal address
+        sanitizedMetadata.put("advertised-host", connectivity.getAdvertisedHost());
+        sanitizedMetadata.put("advertised-port", String.valueOf(connectivity.getAdvertisedPort()));
+        
+        // Add version to metadata
+        sanitizedMetadata.put("version", request.getVersion());
+        
+        // Add service type to metadata for identification
+        sanitizedMetadata.put("service-type", request.getType().name());
         
         ServiceOptions serviceOptions = new ServiceOptions()
                 .setId(serviceId)
                 .setName(request.getName())
-                .setAddress(host)
-                .setPort(port)
+                .setAddress(consulHost)  // Use internal host (reachable by Consul)
+                .setPort(consulPort)     // Use internal port (reachable by Consul)
                 .setTags(new ArrayList<>(request.getTagsList()))
-                .setMeta(new HashMap<>(request.getMetadataMap()));
-
-        // Add version to metadata
-        serviceOptions.getMeta().put("version", request.getVersion());
-        
-        // Add service type to metadata for identification
-        serviceOptions.getMeta().put("service-type", request.getType().name());
+                .setMeta(sanitizedMetadata);
 
         // Add capabilities as tags with prefix
         request.getCapabilitiesList().forEach(cap ->
                 serviceOptions.getTags().add("capability:" + cap)
         );
 
-        // Determine the host for health checks (prefer internal if available)
-        String healthCheckHost = connectivity.hasInternalHost() 
-                ? connectivity.getInternalHost() 
-                : host;
-        int healthCheckPort = connectivity.hasInternalPort() 
-                ? connectivity.getInternalPort() 
-                : port;
+        // Health checks use the same address as the service registration
+        // (Consul will use the service's registered address for health checks)
+        String healthCheckHost = consulHost;
+        int healthCheckPort = consulPort;
 
         // Configure gRPC health check
         CheckOptions checkOptions = new CheckOptions()
@@ -108,5 +123,22 @@ public class ConsulRegistrar {
      */
     public static String generateServiceId(String serviceName, String host, int port) {
         return String.format("%s-%s-%d", serviceName, host, port);
+    }
+
+    /**
+     * Sanitize metadata keys by replacing dots with underscores.
+     * Consul metadata keys cannot contain dots, so we replace them with underscores
+     * (matching the pattern used elsewhere in the codebase, e.g., ApicurioRegistryClient).
+     * 
+     * @param metadata The original metadata map
+     * @return A new map with sanitized keys
+     */
+    private Map<String, String> sanitizeMetadataKeys(Map<String, String> metadata) {
+        Map<String, String> sanitized = new HashMap<>();
+        for (Map.Entry<String, String> entry : metadata.entrySet()) {
+            String sanitizedKey = entry.getKey().replace('.', '_');
+            sanitized.put(sanitizedKey, entry.getValue());
+        }
+        return sanitized;
     }
 }
