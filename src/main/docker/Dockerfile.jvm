@@ -106,7 +106,7 @@ USER 185
 
 # Health check using Quarkus health endpoint
 HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/q/health || exit 1
+    CMD curl -f http://localhost:8080/platform-registration/q/health || exit 1
 
 # Use exec form for proper signal handling
 ENTRYPOINT ["java", "-jar", "/deployments/quarkus-run.jar"]
