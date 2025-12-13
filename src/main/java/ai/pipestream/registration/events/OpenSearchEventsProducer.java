@@ -5,36 +5,39 @@ import ai.pipestream.platform.registration.v1.ServiceRegistered;
 import ai.pipestream.platform.registration.v1.ModuleUnregistered;
 import ai.pipestream.platform.registration.v1.ServiceUnregistered;
 import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.reactive.messaging.Channel;
-import io.smallrye.reactive.messaging.MutinyEmitter;
+import jakarta.inject.Inject;
+import ai.pipestream.apicurio.registry.protobuf.ProtobufChannel;
+import ai.pipestream.apicurio.registry.protobuf.ProtobufEmitter;
 import org.jboss.logging.Logger;
 import com.google.protobuf.Timestamp;
 
 /**
  * Produces events to Kafka for OpenSearch indexing.
  * Only emits on successful registration/unregistration.
- * Key: UUID (auto-configured by quarkus-apicurio-registry-protobuf extension)
+ * Key: UUID (auto-configured by quarkus-apicurio-registry-protobuf extension via KeyExtractors)
  * Value: Protobuf events (auto-serialized by extension)
  */
+@SuppressWarnings("CdiInjectionPointsInspection")
 @ApplicationScoped
 public class OpenSearchEventsProducer {
 
     private static final Logger LOG = Logger.getLogger(OpenSearchEventsProducer.class);
 
-    // The quarkus-apicurio-registry-protobuf extension auto-detects Protobuf types
-    // and configures ProtobufKafkaSerializer + UUIDSerializer automatically
+    @Inject
+    @ProtobufChannel("opensearch-service-registered-events-producer")
+    ProtobufEmitter<ServiceRegistered> serviceRegisteredEmitter;
 
-    @Channel("opensearch-service-registered-events-producer")
-    MutinyEmitter<ServiceRegistered> serviceRegisteredEmitter;
+    @Inject
+    @ProtobufChannel("opensearch-service-unregistered-events-producer")
+    ProtobufEmitter<ServiceUnregistered> serviceUnregisteredEmitter;
 
-    @Channel("opensearch-service-unregistered-events-producer")
-    MutinyEmitter<ServiceUnregistered> serviceUnregisteredEmitter;
+    @Inject
+    @ProtobufChannel("opensearch-module-registered-events-producer")
+    ProtobufEmitter<ModuleRegistered> moduleRegisteredEmitter;
 
-    @Channel("opensearch-module-registered-events-producer")
-    MutinyEmitter<ModuleRegistered> moduleRegisteredEmitter;
-
-    @Channel("opensearch-module-unregistered-events-producer")
-    MutinyEmitter<ModuleUnregistered> moduleUnregisteredEmitter;
+    @Inject
+    @ProtobufChannel("opensearch-module-unregistered-events-producer")
+    ProtobufEmitter<ModuleUnregistered> moduleUnregisteredEmitter;
 
     /**
      * Emits a ServiceRegistered event to Kafka for OpenSearch indexing.
@@ -55,7 +58,6 @@ public class OpenSearchEventsProducer {
                 .setTimestamp(createTimestamp())
                 .build();
 
-            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
             serviceRegisteredEmitter.send(event);
             LOG.debugf("Emitted ServiceRegistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {
@@ -76,7 +78,6 @@ public class OpenSearchEventsProducer {
                 .setTimestamp(createTimestamp())
                 .build();
 
-            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
             serviceUnregisteredEmitter.send(event);
             LOG.debugf("Emitted ServiceUnregistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {
@@ -107,7 +108,6 @@ public class OpenSearchEventsProducer {
                 .setTimestamp(createTimestamp())
                 .build();
 
-            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
             moduleRegisteredEmitter.send(event);
             LOG.debugf("Emitted ModuleRegistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {
@@ -128,7 +128,6 @@ public class OpenSearchEventsProducer {
                 .setTimestamp(createTimestamp())
                 .build();
 
-            // Extension automatically handles: UUID key generation + Protobuf serialization + Apicurio schema registration
             moduleUnregisteredEmitter.send(event);
             LOG.debugf("Emitted ModuleUnregistered event for OpenSearch: serviceId=%s", serviceId);
         } catch (Exception e) {

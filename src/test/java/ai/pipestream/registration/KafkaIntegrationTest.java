@@ -3,8 +3,8 @@ package ai.pipestream.registration;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.reactive.messaging.Channel;
-import io.smallrye.reactive.messaging.MutinyEmitter;
+import ai.pipestream.apicurio.registry.protobuf.ProtobufChannel;
+import ai.pipestream.apicurio.registry.protobuf.ProtobufEmitter;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -24,9 +24,10 @@ public class KafkaIntegrationTest {
 
     // Extension auto-detects ServiceRegistered extends MessageLite
     // and configures ProtobufKafkaSerializer + UUIDSerializer
+    @SuppressWarnings("CdiInjectionPointsInspection")
     @Inject
-    @Channel("test-events-out")
-    MutinyEmitter<ServiceRegistered> emitter;
+    @ProtobufChannel("test-events-out")
+    ProtobufEmitter<ServiceRegistered> emitter;
 
     @Inject
     TestConsumer consumer;
@@ -38,7 +39,7 @@ public class KafkaIntegrationTest {
                 .setServiceId("test-id")
                 .build();
 
-        emitter.sendAndAwait(msg);
+        emitter.send(msg).toCompletableFuture().get(10, TimeUnit.SECONDS);
 
         // Wait for consumer
         ServiceRegistered received = consumer.getReceived().get(10, TimeUnit.SECONDS);
