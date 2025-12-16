@@ -7,7 +7,8 @@ plugins {
     alias(libs.plugins.quarkus)
     alias(libs.plugins.maven.publish)
     id 'signing'
-    id 'com.gradleup.nmcp' version '1.3.0'
+    alias(libs.plugins.nmcp.single)
+    alias(libs.plugins.proto.toolchain)
 }
 
 scmVersion {
@@ -21,70 +22,27 @@ scmVersion {
     }
 }
 
-// BOM version is defined in gradle.properties
-def pipestreamBomVersion = findProperty('pipestreamBomVersion')
+// Proto toolchain configuration - fetches from Git and generates Java/gRPC code
+pipestreamProtos {
+    sourceMode = 'git'
 
-// 1. Define the export path
-def bufExportDir = layout.buildDirectory.dir("generated/buf-protos")
-
-// 2. The Sync Tasks - export individual modules instead of non-existent 'platform' module
-tasks.register('syncRegistrationProtos', Exec) {
-    group = 'protobuf'
-    description = 'Exports registration proto files from Buf Registry'
-    commandLine 'buf', 'export', 'buf.build/pipestreamai/registration',
-            '--output', bufExportDir.get().asFile.path
-    outputs.dir(bufExportDir)
-    doFirst {
-        bufExportDir.get().asFile.mkdirs()
-    }
-}
-
-tasks.register('syncModuleProtos', Exec) {
-    group = 'protobuf'
-    description = 'Exports pipeline-module proto files from Buf Registry'
-    commandLine 'buf', 'export', 'buf.build/pipestreamai/pipeline-module',
-            '--output', bufExportDir.get().asFile.path
-    outputs.dir(bufExportDir)
-    dependsOn 'syncRegistrationProtos'
-}
-
-tasks.register('syncProtos') {
-    group = 'protobuf'
-    description = 'Syncs all proto definitions from Buf Registry'
-    dependsOn 'syncModuleProtos'
-}
-// 3. Configure Quarkus to find the protos
-quarkus {
-    // Use 'proto-directory', not 'proto-source-path'
-    quarkusBuildProperties.put("quarkus.grpc.codegen.proto-directory", bufExportDir.get().asFile.path)
-    // Enable gRPC code generation scanning
-    quarkusBuildProperties.put("quarkus.grpc.codegen.enabled", "true")
-}
-
-// 4. CRITICAL: Fix Build Order & IDE Visibility
-sourceSets {
-    main {
-        java {
-            // Tell IntelliJ/Gradle where Quarkus puts the generated Java files
-            srcDir layout.buildDirectory.dir("classes/java/quarkus-generated-sources/grpc")
+    modules {
+        register("registration") {
+            gitRepo = "https://github.com/ai-pipestream/pipestream-protos.git"
+            gitRef = "main"
+            gitSubdir = "registration"
+        }
+        register("pipeline-module") {
+            gitRepo = "https://github.com/ai-pipestream/pipestream-protos.git"
+            gitRef = "main"
+            gitSubdir = "pipeline-module"
         }
     }
 }
 
-// 5. Hook into the correct Quarkus tasks
-// We must run syncProtos BEFORE Quarkus tries to generate code
-tasks.named('quarkusGenerateCode').configure {
-    dependsOn 'syncProtos'
-}
-tasks.named('quarkusGenerateCodeDev').configure {
-    dependsOn 'syncProtos'
-}
-tasks.named('quarkusGenerateCodeTests').configure {
-    dependsOn 'syncProtos'
-}
-
 dependencies {
-    // Import pipeline BOM to align all managed versions (dependency management only, no code coupling)
+    // Import pipeline BOM to align all managed versions
+    // Version defined in gradle.properties as single source of truth
     implementation platform("ai.pipestream:pipestream-bom:${pipestreamBomVersion}")
 
     // Quarkus dependencies - using TOML catalog for version management
@@ -116,14 +74,15 @@ dependencies {
 
     // Quarkus Apicurio Registry Protobuf Extension (Zero-Config)
     // Auto-detects Protobuf message types and configures serializers/deserializers
-    implementation libs.quarkus.apicurio.registry.protobuf
+    // Version managed by pipestream-bom
+    implementation 'ai.pipestream:quarkus-apicurio-registry-protobuf'
 
     // Apicurio Registry v3 client (transitive from extension, but kept for explicit usage if needed)
     implementation libs.apicurio.registry.java.sdk
     implementation libs.apicurio.registry.common
 
-    // Pipestream libraries - using TOML catalog for version management
-    implementation libs.pipestream.devservices
+    // Pipestream devservices extension - version managed by pipestream-bom
+    implementation 'ai.pipestream:pipestream-quarkus-devservices'
 
     // Testing - using TOML catalog where available
     testImplementation libs.quarkus.junit5
@@ -231,7 +190,7 @@ publishing {
                         dmNode = projectNode.appendNode('dependencyManagement')
                     } else {
                         // Handle both NodeList and single Node cases
-                        dmNode = dmNodes instanceof groovy.util.NodeList ? dmNodes[0] : dmNodes
+                        dmNode = dmNodes instanceof NodeList ? dmNodes[0] : dmNodes
                     }
                     
                     // Get or create dependencies node within dependencyManagement
@@ -241,7 +200,7 @@ publishing {
                         depsNode = dmNode.appendNode('dependencies')
                     } else {
                         // Handle both NodeList and single Node cases
-                        depsNode = depsNodes instanceof groovy.util.NodeList ? depsNodes[0] : depsNodes
+                        depsNode = depsNodes instanceof NodeList ? depsNodes[0] : depsNodes
                     }
                     
                     // Check if pipeline-bom already exists
@@ -313,9 +272,3 @@ nmcp {
     }
 }
 
-// Fix sourcesJar dependency on generated code
-afterEvaluate {
-    tasks.named('sourcesJar', Jar) {
-        dependsOn 'quarkusGenerateCode'
-    }
-}
