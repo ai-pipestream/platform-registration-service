@@ -1,7 +1,7 @@
 package ai.pipestream.registration.startup;
 
 import ai.pipestream.platform.registration.v1.Connectivity;
-import ai.pipestream.platform.registration.v1.EventType;
+import ai.pipestream.platform.registration.v1.PlatformEventType;
 import ai.pipestream.platform.registration.v1.RegisterRequest;
 import ai.pipestream.platform.registration.v1.ServiceType;
 import ai.pipestream.registration.handlers.ServiceRegistrationHandler;
@@ -78,9 +78,9 @@ public class SelfRegistrationService {
                 event -> {
                     LOG.infof("Self-registration event: %s - %s", event.getEventType(), event.getMessage());
 
-                    if (event.getEventType() == EventType.EVENT_TYPE_COMPLETED) {
+                    if (event.getEventType() == PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED) {
                         LOG.infof("Successfully self-registered %s with Consul", serviceName);
-                    } else if (event.getEventType() == EventType.EVENT_TYPE_FAILED) {
+                    } else if (event.getEventType() == PlatformEventType.PLATFORM_EVENT_TYPE_FAILED) {
                         LOG.errorf("Failed to self-register %s: %s", serviceName, event.getMessage());
                         if (event.hasErrorDetail()) {
                             LOG.error("Details: " + event.getErrorDetail());

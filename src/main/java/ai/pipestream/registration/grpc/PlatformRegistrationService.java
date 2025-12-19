@@ -89,7 +89,7 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
     }
 
     @Override
-    public Uni<ListModulesResponse> listModules(ListModulesRequest request) {
+    public Uni<ListPlatformModulesResponse> listPlatformModules(ListPlatformModulesRequest request) {
         LOG.debug("Received request to list all modules");
         return discoveryHandler.listModules();
     }

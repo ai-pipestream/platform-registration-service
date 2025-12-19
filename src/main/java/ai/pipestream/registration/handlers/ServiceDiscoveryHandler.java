@@ -2,8 +2,11 @@ package ai.pipestream.registration.handlers;
 
 import com.google.protobuf.Timestamp;
 import ai.pipestream.platform.registration.v1.*;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.unchecked.Unchecked;
 import io.vertx.mutiny.ext.consul.ConsulClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -47,7 +50,7 @@ public class ServiceDiscoveryHandler {
                                 .map(this::convertToGetServiceResponse)
                                 .collect(Collectors.toList());
                         })
-                        .onFailure().recoverWithItem(Collections.<GetServiceResponse>emptyList())
+                        .onFailure().recoverWithItem(Collections.emptyList())
                     )
                     .collect(Collectors.toList());
 
@@ -73,7 +76,7 @@ public class ServiceDiscoveryHandler {
     /**
      * List all modules
      */
-    public Uni<ListModulesResponse> listModules() {
+    public Uni<ListPlatformModulesResponse> listModules() {
         return consulClient.catalogServices()
             .flatMap(services -> {
                 if (services == null || services.getList() == null || services.getList().isEmpty()) {
@@ -92,7 +95,7 @@ public class ServiceDiscoveryHandler {
                                 .map(this::convertToGetModuleResponse)
                                 .collect(Collectors.toList());
                         })
-                        .onFailure().recoverWithItem(Collections.<GetModuleResponse>emptyList())
+                        .onFailure().recoverWithItem(Collections.emptyList())
                     )
                     .collect(Collectors.toList());
 
@@ -102,7 +105,7 @@ public class ServiceDiscoveryHandler {
                             .flatMap(List::stream)
                             .collect(Collectors.toList());
 
-                        return ListModulesResponse.newBuilder()
+                        return ListPlatformModulesResponse.newBuilder()
                             .addAllModules(allModules)
                             .setAsOf(createTimestamp())
                             .setTotalCount(allModules.size())
@@ -120,15 +123,15 @@ public class ServiceDiscoveryHandler {
      */
     public Uni<GetServiceResponse> getServiceByName(String serviceName) {
         return consulClient.healthServiceNodes(serviceName, true)
-            .map(serviceEntries -> {
+            .map(Unchecked.function(serviceEntries -> {
                 if (serviceEntries == null || serviceEntries.getList() == null || serviceEntries.getList().isEmpty()) {
-                    throw new io.grpc.StatusRuntimeException(
-                        io.grpc.Status.NOT_FOUND.withDescription("Service not found: " + serviceName)
+                    throw new StatusRuntimeException(
+                        Status.NOT_FOUND.withDescription("Service not found: " + serviceName)
                     );
                 }
                 // Return first healthy instance
-                return convertToGetServiceResponse(serviceEntries.getList().get(0));
-            });
+                return convertToGetServiceResponse(serviceEntries.getList().getFirst());
+            }));
     }
 
     /**
@@ -245,7 +248,7 @@ public class ServiceDiscoveryHandler {
                         .filter(entry -> {
                             List<String> serviceTags = entry.getService().getTags();
                             if (serviceTags == null) return false;
-                            return serviceTags.containsAll(request.getRequiredTagsList());
+                            return new HashSet<>(serviceTags).containsAll(request.getRequiredTagsList());
                         })
                         .collect(Collectors.toList());
                 }
@@ -296,7 +299,7 @@ public class ServiceDiscoveryHandler {
                 if (selectedInstance == null) {
                     // Use round-robin or random selection
                     // For now, just pick the first one (could be enhanced with load balancing)
-                    selectedInstance = healthyInstances.get(0);
+                    selectedInstance = healthyInstances.getFirst();
                     selectionReason = "Selected first available healthy instance";
                 }
 
@@ -429,8 +432,8 @@ public class ServiceDiscoveryHandler {
             .build();
     }
 
-    private ListModulesResponse buildEmptyModuleList() {
-        return ListModulesResponse.newBuilder()
+    private ListPlatformModulesResponse buildEmptyModuleList() {
+        return ListPlatformModulesResponse.newBuilder()
             .setAsOf(createTimestamp())
             .setTotalCount(0)
             .build();
@@ -524,7 +527,7 @@ public class ServiceDiscoveryHandler {
             .build();
     }
 
-    private WatchModulesResponse convertToWatchModulesResponse(ListModulesResponse listResponse) {
+    private WatchModulesResponse convertToWatchModulesResponse(ListPlatformModulesResponse listResponse) {
         return WatchModulesResponse.newBuilder()
             .addAllModules(listResponse.getModulesList())
             .setAsOf(listResponse.getAsOf())

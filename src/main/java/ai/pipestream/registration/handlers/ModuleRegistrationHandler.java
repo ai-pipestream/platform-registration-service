@@ -13,6 +13,7 @@ import ai.pipestream.registration.repository.ApicurioRegistryClient;
 import ai.pipestream.registration.repository.ModuleRepository;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import io.smallrye.mutiny.unchecked.Unchecked;
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 import io.smallrye.common.vertx.VertxContext;
@@ -64,18 +65,18 @@ public class ModuleRegistrationHandler {
         String serviceId = ConsulRegistrar.generateServiceId(moduleName, host, port);
 
         // Start with validation as a Uni
-        return Uni.createFrom().item(() -> {
+        return Uni.createFrom().item(Unchecked.supplier(() -> {
             if (!validateModuleRequest(request)) {
                 throw new IllegalArgumentException("Invalid module registration request: Missing required fields");
             }
             return request;
-        })
+        }))
         .onItem().transformToMulti(validatedRequest -> {
             // Create a Multi that emits events throughout the registration process
             return Multi.createBy().concatenating()
                 .streams(
-                    Multi.createFrom().item(createEvent(EventType.EVENT_TYPE_STARTED, "Starting module registration", serviceId)),
-                    Multi.createFrom().item(createEvent(EventType.EVENT_TYPE_VALIDATED, "Module registration request validated", null)),
+                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting module registration", serviceId)),
+                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Module registration request validated", null)),
                     executeModuleRegistrationAsMulti(validatedRequest, serviceId)
                 );
         })
@@ -97,8 +98,8 @@ public class ModuleRegistrationHandler {
                 }
 
                 return Multi.createBy().concatenating().streams(
-                    Multi.createFrom().item(createEvent(EventType.EVENT_TYPE_CONSUL_REGISTERED, "Module registered with Consul", serviceId)),
-                    Multi.createFrom().item(createEvent(EventType.EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null)),
+                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_REGISTERED, "Module registered with Consul", serviceId)),
+                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null)),
                     continueRegistrationFlow(request, serviceId)
                 );
             });
@@ -116,7 +117,7 @@ public class ModuleRegistrationHandler {
                 }
 
                 return Multi.createBy().concatenating().streams(
-                    Multi.createFrom().item(createEvent(EventType.EVENT_TYPE_CONSUL_HEALTHY, "Module reported healthy by Consul", null)),
+                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Module reported healthy by Consul", null)),
                     completeRegistrationFlow(request, serviceId)
                 );
             });
@@ -156,19 +157,17 @@ public class ModuleRegistrationHandler {
                     .map(savedModule -> new DatabaseSaveContext(savedModule, metadata, schema));
             })
             // After database is done, we can call Apicurio on worker thread
-            .chain(dbContext -> {
-                return apicurioClient.createOrUpdateSchema(
-                        moduleName,
-                        request.getVersion(),
-                        dbContext.schema
-                    )
-                    .map(schemaResult -> new SavedContext(dbContext.module, schemaResult))
-                    .onFailure().recoverWithItem(err -> {
-                        LOG.warnf(err, "Apicurio registration failed for %s:%s, continuing without registry sync",
-                                moduleName, request.getVersion());
-                        return new SavedContext(dbContext.module, null);
-                    });
-            })
+            .chain(dbContext -> apicurioClient.createOrUpdateSchema(
+                    moduleName,
+                    request.getVersion(),
+                    dbContext.schema
+                )
+                .map(schemaResult -> new SavedContext(dbContext.module, schemaResult))
+                .onFailure().recoverWithItem(err -> {
+                    LOG.warnf(err, "Apicurio registration failed for %s:%s, continuing without registry sync",
+                            moduleName, request.getVersion());
+                    return new SavedContext(dbContext.module, null);
+                }))
             .onItem().transformToMulti(savedContext -> {
                 // Emit to OpenSearch (fire and forget)
                 openSearchProducer.emitModuleRegistered(
@@ -182,14 +181,14 @@ public class ModuleRegistrationHandler {
                 );
 
                 return Multi.createFrom().items(
-                    createEvent(EventType.EVENT_TYPE_METADATA_RETRIEVED, "Module metadata retrieved", null),
-                    createEvent(EventType.EVENT_TYPE_SCHEMA_VALIDATED, "Schema validated or synthesized", null),
-                    createEvent(EventType.EVENT_TYPE_DATABASE_SAVED, "Module registration saved to database", savedContext.module.serviceId),
+                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_METADATA_RETRIEVED, "Module metadata retrieved", null),
+                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Schema validated or synthesized", null),
+                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_DATABASE_SAVED, "Module registration saved to database", savedContext.module.serviceId),
                     (savedContext.schemaResult != null
-                        ? createEvent(EventType.EVENT_TYPE_APICURIO_REGISTERED, "Schema registered in Apicurio", null)
-                        : createEvent(EventType.EVENT_TYPE_SCHEMA_VALIDATED, "Apicurio registry sync skipped (failure)", null)
+                        ? createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED, "Schema registered in Apicurio", null)
+                        : createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Apicurio registry sync skipped (failure)", null)
                     ),
-                    createEvent(EventType.EVENT_TYPE_COMPLETED, "Module registration completed successfully", savedContext.module.serviceId)
+                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED, "Module registration completed successfully", savedContext.module.serviceId)
                 );
             });
     }
@@ -284,8 +283,7 @@ public class ModuleRegistrationHandler {
     }
 
     private Map<String, Object> buildMetadataMap(GetServiceRegistrationResponse metadata) {
-        Map<String, Object> map = new HashMap<>();
-        map.putAll(metadata.getMetadataMap());
+        Map<String, Object> map = new HashMap<>(metadata.getMetadataMap());
 
         if (metadata.hasDisplayName()) map.put("display_name", metadata.getDisplayName());
         if (metadata.hasDescription()) map.put("description", metadata.getDescription());
@@ -308,7 +306,7 @@ public class ModuleRegistrationHandler {
         return !conn.getAdvertisedHost().isEmpty() && conn.getAdvertisedPort() > 0;
     }
 
-    private RegistrationEvent createEvent(EventType type, String message, String serviceId) {
+    private RegistrationEvent createEvent(PlatformEventType type, String message, String serviceId) {
         RegistrationEvent.Builder builder = RegistrationEvent.newBuilder()
             .setEventType(type)
             .setMessage(message)
@@ -323,7 +321,7 @@ public class ModuleRegistrationHandler {
 
     private RegistrationEvent createEventWithError(String serviceId, String message, String errorDetail) {
         RegistrationEvent.Builder builder = RegistrationEvent.newBuilder()
-            .setEventType(EventType.EVENT_TYPE_FAILED)
+            .setEventType(PlatformEventType.PLATFORM_EVENT_TYPE_FAILED)
             .setMessage(message)
             .setErrorDetail(errorDetail)
             .setTimestamp(createTimestamp());

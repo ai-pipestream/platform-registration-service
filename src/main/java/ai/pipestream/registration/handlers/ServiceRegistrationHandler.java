@@ -42,7 +42,7 @@ public class ServiceRegistrationHandler {
 
         return Multi.createFrom().emitter(emitter -> {
             // Emit STARTED event
-            emitter.emit(createEvent(EventType.EVENT_TYPE_STARTED, "Starting service registration", serviceId));
+            emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting service registration", serviceId));
 
             // Validate request
             if (!validateServiceRequest(request)) {
@@ -52,7 +52,7 @@ public class ServiceRegistrationHandler {
                 return;
             }
 
-            emitter.emit(createEvent(EventType.EVENT_TYPE_VALIDATED, "Service registration request validated", null));
+            emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Service registration request validated", null));
 
             // Register with Consul
             consulRegistrar.registerService(request, serviceId)
@@ -64,15 +64,15 @@ public class ServiceRegistrationHandler {
                         return Uni.createFrom().voidItem();
                     }
 
-                    emitter.emit(createEvent(EventType.EVENT_TYPE_CONSUL_REGISTERED, "Service registered with Consul", serviceId));
-                    emitter.emit(createEvent(EventType.EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
+                    emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_REGISTERED, "Service registered with Consul", serviceId));
+                    emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
 
                     // Wait for health check
                     return healthChecker.waitForHealthy(request.getName(), serviceId)
                         .onItem().invoke(healthy -> {
                             if (healthy) {
-                                emitter.emit(createEvent(EventType.EVENT_TYPE_CONSUL_HEALTHY, "Service reported healthy by Consul", null));
-                                RegistrationEvent completed = createEvent(EventType.EVENT_TYPE_COMPLETED, "Service registration completed successfully", serviceId);
+                                emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Service reported healthy by Consul", null));
+                                RegistrationEvent completed = createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED, "Service registration completed successfully", serviceId);
                                 emitter.emit(completed);
 
                                 // Emit to OpenSearch on success
@@ -141,7 +141,7 @@ public class ServiceRegistrationHandler {
         return !conn.getAdvertisedHost().isEmpty() && conn.getAdvertisedPort() > 0;
     }
 
-    private RegistrationEvent createEvent(EventType type, String message, String serviceId) {
+    private RegistrationEvent createEvent(PlatformEventType type, String message, String serviceId) {
         RegistrationEvent.Builder builder = RegistrationEvent.newBuilder()
             .setEventType(type)
             .setMessage(message)
@@ -156,7 +156,7 @@ public class ServiceRegistrationHandler {
 
     private RegistrationEvent createEventWithError(String serviceId, String message, String errorDetail) {
         RegistrationEvent.Builder builder = RegistrationEvent.newBuilder()
-            .setEventType(EventType.EVENT_TYPE_FAILED)
+            .setEventType(PlatformEventType.PLATFORM_EVENT_TYPE_FAILED)
             .setMessage(message)
             .setErrorDetail(errorDetail)
             .setTimestamp(createTimestamp());
