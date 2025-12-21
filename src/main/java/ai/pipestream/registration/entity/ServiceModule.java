@@ -37,7 +37,7 @@ public class ServiceModule extends PanacheEntityBase {
     @Column(name = "config_schema_id")
     public String configSchemaId;
     
-    @Column(columnDefinition = "JSON")
+    @Column(columnDefinition = "JSONB")
     @JdbcTypeCode(SqlTypes.JSON)
     public Map<String, Object> metadata = new HashMap<>();
     

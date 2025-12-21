@@ -54,10 +54,10 @@ dependencies {
     implementation 'io.quarkus:quarkus-container-image-docker'
     implementation 'io.quarkus:quarkus-hibernate-reactive-panache'
     implementation 'io.quarkus:quarkus-hibernate-orm'
-    implementation 'io.quarkus:quarkus-reactive-mysql-client'
-    implementation 'io.quarkus:quarkus-jdbc-mysql'
+    implementation 'io.quarkus:quarkus-reactive-pg-client'
+    implementation 'io.quarkus:quarkus-jdbc-postgresql'
     implementation 'io.quarkus:quarkus-flyway'
-    implementation 'org.flywaydb:flyway-mysql'
+    implementation 'org.flywaydb:flyway-database-postgresql'
     implementation 'io.quarkus:quarkus-smallrye-health'
     implementation 'io.quarkus:quarkus-messaging-kafka'
 
@@ -88,7 +88,7 @@ dependencies {
     testImplementation libs.quarkus.junit5
     testImplementation libs.quarkus.junit5.mockito
     testImplementation 'io.quarkus:quarkus-test-vertx'
-    testImplementation 'org.testcontainers:mysql'
+    testImplementation 'org.testcontainers:postgresql'
     testImplementation libs.rest.assured
     testImplementation libs.wiremock.standalone
     testImplementation libs.wiremock.grpc.extension.standalone

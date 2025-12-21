@@ -26,7 +26,7 @@ public class ConfigSchema extends PanacheEntityBase {
     @Column(name = "schema_version", nullable = false)
     public String schemaVersion;
     
-    @Column(name = "json_schema", nullable = false, columnDefinition = "JSON")
+    @Column(name = "json_schema", nullable = false, columnDefinition = "JSONB")
     @JdbcTypeCode(SqlTypes.JSON)
     public String jsonSchema;
     

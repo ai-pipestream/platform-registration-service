@@ -1,4 +1,4 @@
-# Test infrastructure services for pipeline-messaging integration tests
+# Test infrastructure services for platform-registration integration tests
 # Uses Redpanda (Kafka-compatible) and Apicurio Registry
 
 name: pipeline-kafka-test
@@ -8,40 +8,32 @@ networks:
     driver: bridge
 
 volumes:
-  mysql_it_data:
+  postgres_it_data:
     driver: local
 
 services:
-  # MySQL instance for application data (not Apicurio)
-  mysql-test:
-    container_name: kafka-test-mysql
-    image: mysql:8.0
+  # PostgreSQL instance for application data
+  postgres-test:
+    container_name: kafka-test-postgres
+    image: postgres:16-alpine
     networks:
       - kafka-test-network
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: pipeline
-      MYSQL_USER: pipeline
-      MYSQL_PASSWORD: password
-    command:
-      # Performance optimizations for test environment
-      - --innodb-flush-log-at-trx-commit=0
-      - --innodb-doublewrite=0
-      - --skip-log-bin
-      - --performance-schema=0
-      - --innodb-buffer-pool-size=256M
+      POSTGRES_DB: pipeline
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: password
     ports:
-      - "3308:3306"  # Changed from 3308 to avoid conflicts
+      - "5434:5432"
     volumes:
-      - mysql_it_data:/var/lib/mysql
+      - postgres_it_data:/var/lib/postgresql/data
     labels:
-      quarkus-dev-service-mysql: kafka-test
+      quarkus-dev-service-postgresql: kafka-test
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "pg_isready -U pipeline -d pipeline"]
       interval: 3s
       timeout: 5s
       retries: 10
-      start_period: 10s
+      start_period: 5s
 
   # Redpanda for Kafka-compatible messaging
   kafka-test:
