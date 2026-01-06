@@ -47,7 +47,7 @@ services:
       - --smp 1
       - --overprovisioned
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:9094
-      - --advertise-kafka-addr internal://kafka-test:9092,external://${DOCKER_GATEWAY_HOST:-172.17.0.1}:9095
+      - --advertise-kafka-addr internal://kafka-test:9092,external://${DOCKER_GATEWAY_HOST:-localhost}:9095
     ports:
       - "9095:9094"
     labels:
