@@ -37,7 +37,7 @@ public class KafkaIntegrationTest {
     @Inject
     TestConsumer consumer;
 
-    @ConfigProperty(name = "kafka.bootstrap.servers")
+    @ConfigProperty(name = "kafka.bootstrap.servers", defaultValue = "not-set")
     String kafkaBootstrapServers;
 
     @ConfigProperty(name = "mp.messaging.outgoing.test-events-out.bootstrap.servers", defaultValue = "not-set")
@@ -69,7 +69,7 @@ public class KafkaIntegrationTest {
         logDebug("A", "KafkaIntegrationTest.java:36", "Test starting", Map.of(
             "kafkaBootstrapServers", kafkaBootstrapServers,
             "outgoingBootstrapServers", outgoingBootstrapServers,
-            "dockerGatewayHost", System.getenv("DOCKER_GATEWAY_HOST"),
+            "dockerGatewayHost", System.getenv("DOCKER_GATEWAY_HOST") != null ? System.getenv("DOCKER_GATEWAY_HOST") : "not-set",
             "testStartTime", System.currentTimeMillis()
         ));
         // #endregion
