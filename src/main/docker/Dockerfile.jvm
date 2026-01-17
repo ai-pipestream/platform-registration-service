@@ -78,7 +78,7 @@
 #   accessed directly. (example: "foo.example.com,bar.example.com")
 #
 ###
-FROM registry.access.redhat.com/ubi9-minimal:9.5
+FROM registry.access.redhat.com/ubi9-minimal:9.7
 
 # Install Java 21 runtime (headless for smaller size) and update CVEs
 RUN microdnf install -y \
