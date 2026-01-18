@@ -67,6 +67,23 @@ public class ApicurioRegistryClient {
      */
     public Uni<SchemaRegistrationResponse> createOrUpdateSchema(String serviceName, String version, String jsonSchema) {
         String artifactId = versionedArtifactId(serviceName, version);
+        return createOrUpdateSchemaWithArtifactId(artifactId, version, jsonSchema);
+    }
+
+    /**
+     * Create or update a schema with a custom artifact base name.
+     * The artifact ID will be built from the base name and version.
+     */
+    public Uni<SchemaRegistrationResponse> createOrUpdateSchemaWithArtifactBase(String artifactBase, String version, String jsonSchema) {
+        String artifactId = versionedArtifactId(artifactBase, version);
+        return createOrUpdateSchemaWithArtifactId(artifactId, version, jsonSchema);
+    }
+
+    /**
+     * Create or update a schema with a pre-built artifact ID.
+     * The artifactId should already include the version suffix (use versionedArtifactId to build it).
+     */
+    public Uni<SchemaRegistrationResponse> createOrUpdateSchemaWithArtifactId(String artifactId, String version, String jsonSchema) {
 
         // Execute the blocking operation on a worker thread to avoid blocking the event loop
         return Uni.createFrom().item(() -> {
@@ -102,8 +119,8 @@ public class ApicurioRegistryClient {
                         versionMetaData.getVersion()
                 );
 
-                LOG.infof("Successfully registered schema for %s with version %s (globalId: %d)",
-                        serviceName, version, versionMetaData.getGlobalId());
+                LOG.infof("Successfully registered schema with artifactId %s version %s (globalId: %d)",
+                        artifactId, version, versionMetaData.getGlobalId());
 
                 return response;
             } catch (Exception e) {
@@ -111,18 +128,18 @@ public class ApicurioRegistryClient {
                 try {
                     Class<?> apiExClass = Class.forName("com.microsoft.kiota.ApiException");
                     if (apiExClass.isInstance(e)) {
-                        LOG.errorf(e, "Apicurio rejected schema for %s:%s (artifactId=%s)", serviceName, version, artifactId);
+                        LOG.errorf(e, "Apicurio rejected schema for artifactId=%s version=%s", artifactId, version);
                     } else if (e.getCause() != null && apiExClass.isInstance(e.getCause())) {
-                        LOG.errorf(e, "Apicurio rejected schema for %s:%s (artifactId=%s)", serviceName, version, artifactId);
+                        LOG.errorf(e, "Apicurio rejected schema for artifactId=%s version=%s", artifactId, version);
                     } else {
-                        LOG.errorf(e, "Failed to register schema for service %s:%s (artifactId=%s)", serviceName, version, artifactId);
+                        LOG.errorf(e, "Failed to register schema for artifactId=%s version=%s", artifactId, version);
                     }
                 } catch (ClassNotFoundException cnf) {
-                    LOG.errorf(e, "Failed to register schema for service %s:%s (artifactId=%s)", serviceName, version, artifactId);
+                    LOG.errorf(e, "Failed to register schema for artifactId=%s version=%s", artifactId, version);
                 }
                 throw new ApicurioRegistryException(
-                    String.format("Failed to register schema for service %s:%s", serviceName, version),
-                    serviceName,
+                    String.format("Failed to register schema for artifactId=%s version=%s", artifactId, version),
+                    null, // serviceName not available in this context
                     artifactId,
                     e
                 );
@@ -250,9 +267,9 @@ public class ApicurioRegistryClient {
         });
     }
 
-    private String versionedArtifactId(String serviceName, String version) {
+    private String versionedArtifactId(String baseName, String version) {
         String safeVersion = (version == null || version.isBlank()) ? "v1" : ("v" + version.replace('.', '_'));
-        return serviceName + "-config-" + safeVersion;
+        return baseName + "-config-" + safeVersion;
     }
 
     /**

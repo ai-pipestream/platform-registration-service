@@ -5,6 +5,7 @@ import ai.pipestream.platform.registration.v1.*;
 import ai.pipestream.registration.consul.ConsulHealthChecker;
 import ai.pipestream.registration.consul.ConsulRegistrar;
 import ai.pipestream.registration.events.OpenSearchEventsProducer;
+import ai.pipestream.registration.repository.ApicurioRegistryClient;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -28,6 +29,9 @@ public class ServiceRegistrationHandler {
 
     @Inject
     OpenSearchEventsProducer openSearchProducer;
+
+    @Inject
+    ApicurioRegistryClient apicurioClient;
 
     /**
      * Register a service with streaming status updates.
@@ -69,16 +73,8 @@ public class ServiceRegistrationHandler {
 
                     // Wait for health check
                     return healthChecker.waitForHealthy(request.getName(), serviceId)
-                        .onItem().invoke(healthy -> {
-                            if (healthy) {
-                                emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Service reported healthy by Consul", null));
-                                RegistrationEvent completed = createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED, "Service registration completed successfully", serviceId);
-                                emitter.emit(completed);
-
-                                // Emit to OpenSearch on success
-                                openSearchProducer.emitServiceRegistered(serviceId, request.getName(),
-                                    host, port, request.getVersion());
-                            } else {
+                        .onItem().transformToUni(healthy -> {
+                            if (!healthy) {
                                 // Service registered but never became healthy
                                 RegistrationEvent failed = createEventWithError(serviceId, "Service registered but failed health checks",
                                     "Service did not become healthy within timeout period. Check service logs and connectivity.");
@@ -90,8 +86,44 @@ public class ServiceRegistrationHandler {
                                         cleanup -> LOG.debugf("Cleaned up unhealthy service registration: %s", serviceId),
                                         error -> LOG.errorf(error, "Failed to cleanup unhealthy service: %s", serviceId)
                                     );
+
+                                emitter.complete();
+                                return Uni.createFrom().voidItem();
                             }
-                            emitter.complete();
+
+                            emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Service reported healthy by Consul", null));
+
+                            Uni<Void> schemaRegistration = Uni.createFrom().voidItem();
+                            if (request.hasHttpSchema()) {
+                                String schemaVersion = request.hasHttpSchemaVersion() && !request.getHttpSchemaVersion().isBlank()
+                                    ? request.getHttpSchemaVersion()
+                                    : request.getVersion();
+                                String artifactBase = request.hasHttpSchemaArtifactId() && !request.getHttpSchemaArtifactId().isBlank()
+                                    ? request.getHttpSchemaArtifactId()
+                                    : request.getName() + "-http";
+
+                                schemaRegistration = apicurioClient
+                                    .createOrUpdateSchemaWithArtifactBase(artifactBase, schemaVersion, request.getHttpSchema())
+                                    .invoke(result -> emitter.emit(
+                                        createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED,
+                                            "HTTP schema registered in Apicurio", null)))
+                                    .onFailure().invoke(error ->
+                                        LOG.warnf(error, "Failed to register HTTP schema for service %s", request.getName()))
+                                    .replaceWithVoid();
+                            }
+
+                            return schemaRegistration.invoke(() -> {
+                                RegistrationEvent completed = createEvent(
+                                    PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED,
+                                    "Service registration completed successfully",
+                                    serviceId);
+                                emitter.emit(completed);
+
+                                // Emit to OpenSearch on success
+                                openSearchProducer.emitServiceRegistered(serviceId, request.getName(),
+                                    host, port, request.getVersion());
+                                emitter.complete();
+                            });
                         });
                 })
                 .subscribe().with(

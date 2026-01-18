@@ -60,6 +60,32 @@ public class ConsulRegistrar {
         
         // Add service type to metadata for identification
         sanitizedMetadata.put("service-type", request.getType().name());
+
+        // Add HTTP endpoints to metadata for discovery (if provided)
+        if (request.getHttpEndpointsCount() > 0) {
+            sanitizedMetadata.put("http_endpoint_count", String.valueOf(request.getHttpEndpointsCount()));
+            for (int i = 0; i < request.getHttpEndpointsCount(); i++) {
+                var endpoint = request.getHttpEndpoints(i);
+                String prefix = "http_endpoint_" + i + "_";
+                sanitizedMetadata.put(prefix + "scheme", endpoint.getScheme());
+                sanitizedMetadata.put(prefix + "host", endpoint.getHost());
+                sanitizedMetadata.put(prefix + "port", String.valueOf(endpoint.getPort()));
+                if (!endpoint.getBasePath().isBlank()) {
+                    sanitizedMetadata.put(prefix + "base_path", endpoint.getBasePath());
+                }
+                if (!endpoint.getHealthPath().isBlank()) {
+                    sanitizedMetadata.put(prefix + "health_path", endpoint.getHealthPath());
+                }
+                sanitizedMetadata.put(prefix + "tls_enabled", String.valueOf(endpoint.getTlsEnabled()));
+            }
+        }
+
+        if (request.hasHttpSchemaArtifactId()) {
+            sanitizedMetadata.put("http_schema_artifact_id", request.getHttpSchemaArtifactId());
+        }
+        if (request.hasHttpSchemaVersion()) {
+            sanitizedMetadata.put("http_schema_version", request.getHttpSchemaVersion());
+        }
         
         ServiceOptions serviceOptions = new ServiceOptions()
                 .setId(serviceId)

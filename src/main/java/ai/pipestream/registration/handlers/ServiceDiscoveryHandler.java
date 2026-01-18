@@ -319,6 +319,13 @@ public class ServiceDiscoveryHandler {
                     if (service.getMeta().containsKey("version")) {
                         responseBuilder.setVersion(service.getMeta().get("version"));
                     }
+                    responseBuilder.addAllHttpEndpoints(parseHttpEndpoints(service.getMeta()));
+                    if (service.getMeta().containsKey("http_schema_artifact_id")) {
+                        responseBuilder.setHttpSchemaArtifactId(service.getMeta().get("http_schema_artifact_id"));
+                    }
+                    if (service.getMeta().containsKey("http_schema_version")) {
+                        responseBuilder.setHttpSchemaVersion(service.getMeta().get("http_schema_version"));
+                    }
                 }
 
                 // Add tags and capabilities
@@ -359,6 +366,13 @@ public class ServiceDiscoveryHandler {
             builder.putAllMetadata(service.getMeta());
             if (service.getMeta().containsKey("version")) {
                 builder.setVersion(service.getMeta().get("version"));
+            }
+            builder.addAllHttpEndpoints(parseHttpEndpoints(service.getMeta()));
+            if (service.getMeta().containsKey("http_schema_artifact_id")) {
+                builder.setHttpSchemaArtifactId(service.getMeta().get("http_schema_artifact_id"));
+            }
+            if (service.getMeta().containsKey("http_schema_version")) {
+                builder.setHttpSchemaVersion(service.getMeta().get("http_schema_version"));
             }
         }
 
@@ -407,6 +421,67 @@ public class ServiceDiscoveryHandler {
         builder.setLastHealthCheck(createTimestamp());
 
         return builder.build();
+    }
+
+    private List<HttpEndpoint> parseHttpEndpoints(Map<String, String> metadata) {
+        if (metadata == null || metadata.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String countValue = metadata.get("http_endpoint_count");
+        if (countValue == null || countValue.isBlank()) {
+            return Collections.emptyList();
+        }
+
+        int count;
+        try {
+            count = Integer.parseInt(countValue);
+        } catch (NumberFormatException e) {
+            LOG.debugf("Invalid http_endpoint_count metadata: %s", countValue);
+            return Collections.emptyList();
+        }
+
+        List<HttpEndpoint> endpoints = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String prefix = "http_endpoint_" + i + "_";
+            String scheme = metadata.getOrDefault(prefix + "scheme", "");
+            String host = metadata.getOrDefault(prefix + "host", "");
+            String portValue = metadata.getOrDefault(prefix + "port", "");
+            if (host.isBlank() || portValue.isBlank()) {
+                continue;
+            }
+
+            int port;
+            try {
+                port = Integer.parseInt(portValue);
+            } catch (NumberFormatException e) {
+                continue;
+            }
+
+            HttpEndpoint.Builder endpointBuilder = HttpEndpoint.newBuilder()
+                .setScheme(scheme)
+                .setHost(host)
+                .setPort(port);
+
+            String basePath = metadata.getOrDefault(prefix + "base_path", "");
+            if (!basePath.isBlank()) {
+                endpointBuilder.setBasePath(basePath);
+            }
+
+            String healthPath = metadata.getOrDefault(prefix + "health_path", "");
+            if (!healthPath.isBlank()) {
+                endpointBuilder.setHealthPath(healthPath);
+            }
+
+            String tlsValue = metadata.getOrDefault(prefix + "tls_enabled", "");
+            if (!tlsValue.isBlank()) {
+                endpointBuilder.setTlsEnabled(Boolean.parseBoolean(tlsValue));
+            }
+
+            endpoints.add(endpointBuilder.build());
+        }
+
+        return endpoints;
     }
 
     private boolean isModule(List<String> tags) {
