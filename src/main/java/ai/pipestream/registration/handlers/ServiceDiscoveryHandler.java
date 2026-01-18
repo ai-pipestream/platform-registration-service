@@ -423,7 +423,7 @@ public class ServiceDiscoveryHandler {
         return builder.build();
     }
 
-    private List<HttpEndpoint> parseHttpEndpoints(Map<String, String> metadata) {
+    /* package-private for testing */ List<HttpEndpoint> parseHttpEndpoints(Map<String, String> metadata) {
         if (metadata == null || metadata.isEmpty()) {
             return Collections.emptyList();
         }
