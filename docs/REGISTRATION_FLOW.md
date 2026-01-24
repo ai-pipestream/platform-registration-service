@@ -22,8 +22,8 @@ service PlatformRegistrationService {
 }
 
 message RegisterRequest {
-  string name = 1;           // Service or module name
-  ServiceType type = 2;      // SERVICE_TYPE_SERVICE or SERVICE_TYPE_MODULE
+  string name = 1;           // Component name
+  ServiceType type = 2;      // SERVICE_TYPE_SERVICE, MODULE, or CONNECTOR
   Connectivity connectivity = 3;
   string version = 4;
   map<string, string> metadata = 5;
@@ -63,7 +63,7 @@ flowchart TB
     
     subgraph External Systems
         CONSUL[(Consul)]
-        DB[(MySQL)]
+        DB[(PostgreSQL)]
         APICURIO[(Apicurio Registry)]
         KAFKA[Kafka]
     end
@@ -92,6 +92,7 @@ The `PlatformRegistrationService` gRPC service receives all registration request
 flowchart TD
     A[Register RPC called] --> B{Check request.type}
     B -->|SERVICE_TYPE_SERVICE| C[ServiceRegistrationHandler.registerService]
+    B -->|SERVICE_TYPE_CONNECTOR| C
     B -->|SERVICE_TYPE_MODULE| D[ModuleRegistrationHandler.registerModule]
     B -->|UNSPECIFIED| E[Return Error]
     
@@ -159,7 +160,7 @@ sequenceDiagram
     participant MRH as ModuleRegistrationHandler
     participant Consul
     participant Module as Module (callback)
-    participant DB as MySQL
+    participant DB as PostgreSQL
     participant Apicurio as Apicurio Registry
     participant Kafka as Kafka (OpenSearch Events)
     
@@ -213,7 +214,7 @@ sequenceDiagram
 | `EVENT_TYPE_CONSUL_HEALTHY` | Module passed Consul health checks |
 | `EVENT_TYPE_METADATA_RETRIEVED` | Module metadata fetched via callback |
 | `EVENT_TYPE_SCHEMA_VALIDATED` | JSON schema validated or synthesized |
-| `EVENT_TYPE_DATABASE_SAVED` | Registration persisted to MySQL |
+| `EVENT_TYPE_DATABASE_SAVED` | Registration persisted to PostgreSQL |
 | `EVENT_TYPE_APICURIO_REGISTERED` | Schema registered in Apicurio |
 | `EVENT_TYPE_COMPLETED` | Registration complete |
 | `EVENT_TYPE_FAILED` | Registration failed (with error_detail) |
@@ -302,7 +303,7 @@ flowchart TB
     
     subgraph Storage
         CONSUL[(Consul<br/>Service Discovery)]
-        DB[(MySQL<br/>Module Metadata)]
+        DB[(PostgreSQL<br/>Module Metadata)]
         APICURIO[(Apicurio<br/>Schema Registry)]
     end
     
@@ -325,7 +326,7 @@ flowchart TB
 | `ModuleRegistrationHandler` | Module registration logic with callback |
 | `ConsulRegistrar` | Consul service registration |
 | `ConsulHealthChecker` | Wait for service health |
-| `ModuleRepository` | MySQL persistence for module metadata |
+| `ModuleRepository` | PostgreSQL persistence for module metadata |
 | `ApicurioRegistryClient` | Schema registry operations |
 | `RegistrationGrpcClients` | Dynamic gRPC client for module callbacks |
 | `OpenSearchEventsProducer` | Kafka event emission |

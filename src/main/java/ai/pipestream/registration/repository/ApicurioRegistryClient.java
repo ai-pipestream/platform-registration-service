@@ -7,6 +7,7 @@ import io.apicurio.registry.utils.IoUtil;
 import io.kiota.http.vertx.VertXRequestAdapter;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
+import io.smallrye.mutiny.unchecked.Unchecked;
 import io.vertx.mutiny.core.Vertx;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -20,7 +21,7 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Client for interacting with Apicurio Registry v3.
- * This is the secondary storage for schemas (primary is MySQL).
+ * This is the secondary storage for schemas (primary is PostgreSQL).
  */
 @ApplicationScoped
 public class ApicurioRegistryClient {
@@ -86,7 +87,7 @@ public class ApicurioRegistryClient {
     public Uni<SchemaRegistrationResponse> createOrUpdateSchemaWithArtifactId(String artifactId, String version, String jsonSchema) {
 
         // Execute the blocking operation on a worker thread to avoid blocking the event loop
-        return Uni.createFrom().item(() -> {
+        return Uni.createFrom().item(Unchecked.supplier(() -> {
             try {
                 // Create the artifact with the JSON schema
                 CreateArtifact createArtifact = new CreateArtifact();
@@ -108,11 +109,13 @@ public class ApicurioRegistryClient {
                         .byGroupId(DEFAULT_GROUP)
                         .artifacts()
                         .post(createArtifact, config -> {
+                            assert config.queryParameters != null;
                             config.queryParameters.ifExists = IfArtifactExists.FIND_OR_CREATE_VERSION;
                         })
                         .getVersion();
 
                 // Create response
+                assert versionMetaData != null;
                 SchemaRegistrationResponse response = new SchemaRegistrationResponse(
                         artifactId,
                         versionMetaData.getGlobalId(),
@@ -144,17 +147,15 @@ public class ApicurioRegistryClient {
                     e
                 );
             }
-        })
+        }))
         .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());  // Run on worker thread pool
     }
 
     /**
-     * Get schema by artifact ID
+     * Get schema by raw artifact ID
      */
-    public Uni<String> getSchema(String serviceName, String version) {
-        String artifactId = versionedArtifactId(serviceName, version);
-
-        return Uni.createFrom().item(() -> {
+    public Uni<String> getSchemaByArtifactId(String artifactId, String version) {
+        return Uni.createFrom().item(Unchecked.supplier(() -> {
             try {
                 // Get the artifact content - THIS IS A BLOCKING CALL
                 if (version != null && !version.isEmpty()) {
@@ -168,6 +169,7 @@ public class ApicurioRegistryClient {
                             .content()
                             .get();
 
+                    assert content != null;
                     return IoUtil.toString(content);
                 } else {
                     // Get latest version
@@ -180,19 +182,28 @@ public class ApicurioRegistryClient {
                             .content()
                             .get();
 
+                    assert content != null;
                     return IoUtil.toString(content);
                 }
             } catch (Exception e) {
-                LOG.errorf(e, "Failed to get schema for service %s", serviceName);
+                LOG.errorf(e, "Failed to get schema for artifactId %s", artifactId);
                 throw new ApicurioRegistryException(
-                    String.format("Failed to get schema for service %s (version: %s)", serviceName, version),
-                    serviceName,
+                    String.format("Failed to get schema for artifactId %s (version: %s)", artifactId, version),
+                    null,
                     artifactId,
                     e
                 );
             }
-        })
+        }))
         .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());  // Run on worker thread pool
+    }
+
+    /**
+     * Get schema by artifact ID (legacy naming, uses versionedArtifactId internally)
+     */
+    public Uni<String> getSchema(String serviceName, String version) {
+        String artifactId = versionedArtifactId(serviceName, version);
+        return getSchemaByArtifactId(artifactId, version);
     }
 
     /**
@@ -225,11 +236,13 @@ public class ApicurioRegistryClient {
                 ArtifactSearchResults results = registryClient.search()
                         .artifacts()
                         .get(config -> {
+                            assert config.queryParameters != null;
                             config.queryParameters.groupId = DEFAULT_GROUP;
                             config.queryParameters.limit = 500;
                             config.queryParameters.offset = 0;
                         });
 
+                assert results != null;
                 future.complete(results.getArtifacts());
             } catch (Exception e) {
                 LOG.errorf(e, "Failed to list artifacts");

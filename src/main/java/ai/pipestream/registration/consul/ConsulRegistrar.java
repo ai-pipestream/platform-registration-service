@@ -104,13 +104,45 @@ public class ConsulRegistrar {
         // (Consul will use the service's registered address for health checks)
         String healthCheckHost = consulHost;
         int healthCheckPort = consulPort;
-
-        // Configure gRPC health check
+        
         CheckOptions checkOptions = new CheckOptions()
-                .setName(request.getName() + " gRPC Health Check")
-                .setGrpc(healthCheckHost + ":" + healthCheckPort)
+                .setName(request.getName() + " Health Check")
                 .setInterval("10s")
                 .setDeregisterAfter("1m");
+
+        // Check for HTTP health check configuration first
+        boolean httpCheckConfigured = false;
+        if (request.getHttpEndpointsCount() > 0) {
+            // Find the first endpoint with a health path
+            for (var endpoint : request.getHttpEndpointsList()) {
+                if (!endpoint.getHealthPath().isBlank()) {
+                    String scheme = endpoint.getScheme().isBlank() ? "http" : endpoint.getScheme();
+                    // Use the endpoint's host/port if specified, otherwise fall back to the main registration host/port
+                    // BUT: For the check to work from Consul, it must be reachable.
+                    // If the endpoint specifies "localhost" but we are in Docker, we might need the consulHost.
+                    // Ideally, we trust the endpoint definition if it's explicit.
+                    
+                    String checkHost = endpoint.getHost().isBlank() ? consulHost : endpoint.getHost();
+                    int checkPort = endpoint.getPort() == 0 ? consulPort : endpoint.getPort();
+                    
+                    String checkUrl = String.format("%s://%s:%d%s", 
+                        scheme, checkHost, checkPort, endpoint.getHealthPath());
+                    
+                    checkOptions.setHttp(checkUrl);
+                    checkOptions.setName(request.getName() + " HTTP Health Check");
+                    LOG.infof("Configuring HTTP health check for %s: %s", serviceId, checkUrl);
+                    httpCheckConfigured = true;
+                    break;
+                }
+            }
+        }
+        
+        if (!httpCheckConfigured) {
+            // Fallback to gRPC health check
+            checkOptions.setName(request.getName() + " gRPC Health Check");
+            checkOptions.setGrpc(healthCheckHost + ":" + healthCheckPort);
+            LOG.infof("Configuring gRPC health check for %s: %s:%d", serviceId, healthCheckHost, healthCheckPort);
+        }
 
         serviceOptions.setCheckOptions(checkOptions);
 

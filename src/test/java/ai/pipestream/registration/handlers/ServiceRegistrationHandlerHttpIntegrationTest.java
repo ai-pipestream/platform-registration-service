@@ -1,25 +1,41 @@
 package ai.pipestream.registration.handlers;
 
+import ai.pipestream.platform.registration.v1.Connectivity;
 import ai.pipestream.platform.registration.v1.PlatformEventType;
 import ai.pipestream.platform.registration.v1.RegisterRequest;
+import ai.pipestream.registration.consul.ConsulHealthChecker;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
+import ai.pipestream.test.support.ConsulTestResource;
+import io.quarkus.test.InjectMock;
+import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.time.Duration;
+import java.util.Locale;
 import java.util.UUID;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 /**
  * Integration test for ServiceRegistrationHandler HTTP schema registration.
  * This test validates that HTTP schemas are properly registered with Apicurio Registry
- * via DevServices without mocking the client.
+ * via ConsulTestResource (for Consul) and DevServices (for Apicurio).
+ * 
+ * Note: ConsulHealthChecker is mocked because Consul's gRPC health check cannot
+ * reliably reach the test server in containerized test environments. These tests
+ * focus on HTTP schema registration, not health check functionality.
  */
 @QuarkusTest
+@QuarkusTestResource(ConsulTestResource.class)
 class ServiceRegistrationHandlerHttpIntegrationTest {
 
     @Inject
@@ -27,6 +43,33 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
 
     @Inject
     ApicurioRegistryClient apicurioClient;  // Real client, NOT mocked!
+
+    @InjectMock
+    ConsulHealthChecker consulHealthChecker;  // Mock health checker to bypass gRPC health check
+
+    @ConfigProperty(name = "quarkus.http.test-port")
+    int testPort;
+
+    /**
+     * Get the host address that Docker containers can use to reach the host machine.
+     * On Linux, use the Docker bridge gateway (172.17.0.1).
+     * On macOS/Windows, use host.docker.internal.
+     */
+    private static String getDockerHostAddress() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (os.contains("linux")) {
+            return "172.17.0.1";
+        } else {
+            return "host.docker.internal";
+        }
+    }
+
+    @BeforeEach
+    void setup() {
+        // Mock health checker to always report healthy - we're testing schema registration, not health checks
+        when(consulHealthChecker.waitForHealthy(anyString(), anyString()))
+            .thenReturn(Uni.createFrom().item(true));
+    }
 
     @Test
     void registerService_withHttpSchema_registersInApicurio() {
@@ -59,6 +102,10 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
             .setHttpSchema(httpSchema)
             .setHttpSchemaArtifactId(serviceName + "-http")
             .setHttpSchemaVersion(version)
+            .setConnectivity(Connectivity.newBuilder()
+                .setAdvertisedHost(getDockerHostAddress())
+                .setAdvertisedPort(testPort)
+                .build())
             .build();
 
         // Act - Register the service and wait for completion
@@ -74,7 +121,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
 
         // Verify the HTTP schema was registered in Apicurio
         String expectedArtifactId = serviceName + "-http-config-v1_0_0";
-        String retrievedSchema = apicurioClient.getSchema(expectedArtifactId, version)
+        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version)
             .await().atMost(Duration.ofSeconds(10));
 
         assertThat("HTTP schema should be retrievable from Apicurio",
@@ -95,6 +142,10 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
             .setVersion(version)
             .setHttpSchema(httpSchema)
             // No explicit http_schema_artifact_id - should use default
+            .setConnectivity(Connectivity.newBuilder()
+                .setAdvertisedHost(getDockerHostAddress())
+                .setAdvertisedPort(testPort)
+                .build())
             .build();
 
         // Act - Register the service and wait for completion
@@ -110,7 +161,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
 
         // Verify the HTTP schema was registered with default artifact ID
         String expectedArtifactId = serviceName + "-http-config-v2_0_0";
-        String retrievedSchema = apicurioClient.getSchema(expectedArtifactId, version)
+        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version)
             .await().atMost(Duration.ofSeconds(10));
 
         assertThat("HTTP schema should be retrievable with default artifact ID",
@@ -132,6 +183,10 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
             .setHttpSchema(httpSchema)
             .setHttpSchemaArtifactId(serviceName + "-openapi")
             // No http_schema_version - should use service version
+            .setConnectivity(Connectivity.newBuilder()
+                .setAdvertisedHost(getDockerHostAddress())
+                .setAdvertisedPort(testPort)
+                .build())
             .build();
 
         // Act
@@ -144,7 +199,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
 
         // Verify schema registered with service version
         String expectedArtifactId = serviceName + "-openapi-config-v3_1_0";
-        String retrievedSchema = apicurioClient.getSchema(expectedArtifactId, serviceVersion)
+        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, serviceVersion)
             .await().atMost(Duration.ofSeconds(10));
 
         assertThat("HTTP schema should use service version",

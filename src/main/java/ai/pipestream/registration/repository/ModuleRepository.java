@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Repository for managing service module registrations in MySQL.
+ * Repository for managing service module registrations in PostgreSQL.
  * This is the primary data store (system of record).
  */
 @ApplicationScoped
@@ -106,7 +106,7 @@ public class ModuleRepository {
     }
     
     /**
-     * Save a configuration schema (dual storage: MySQL + Apicurio)
+     * Save a configuration schema (dual storage: PostgreSQL + Apicurio)
      */
     public Uni<ConfigSchema> saveSchema(String serviceName, String version, String jsonSchema) {
         ConfigSchema schema = ConfigSchema.create(serviceName, version, jsonSchema);

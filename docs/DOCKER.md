@@ -59,7 +59,7 @@ docker pull ghcr.io/ai-pipestream/platform-registration-service:latest
 docker run -p 38101:8080 \
   -e CONSUL_HOST=consul \
   -e CONSUL_PORT=8500 \
-  -e QUARKUS_DATASOURCE_JDBC_URL=jdbc:mysql://mysql:3306/pipeline_registry \
+  -e QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://postgres:5432/platform_registration \
   -e QUARKUS_DATASOURCE_USERNAME=registration_user \
   -e QUARKUS_DATASOURCE_PASSWORD=password \
   ghcr.io/ai-pipestream/platform-registration-service:latest

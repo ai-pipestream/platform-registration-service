@@ -445,17 +445,23 @@ public class ServiceDiscoveryHandler {
         for (int i = 0; i < count; i++) {
             String prefix = "http_endpoint_" + i + "_";
             String scheme = metadata.getOrDefault(prefix + "scheme", "");
-            String host = metadata.getOrDefault(prefix + "host", "");
-            String portValue = metadata.getOrDefault(prefix + "port", "");
-            if (host.isBlank() || portValue.isBlank()) {
+            
+            // Skip if no scheme is provided - we need at least that to know it's an HTTP endpoint
+            if (scheme.isBlank()) {
                 continue;
             }
+            
+            String host = metadata.getOrDefault(prefix + "host", "");
+            String portValue = metadata.getOrDefault(prefix + "port", "");
 
-            int port;
-            try {
-                port = Integer.parseInt(portValue);
-            } catch (NumberFormatException e) {
-                continue;
+            int port = 0;
+            if (!portValue.isBlank()) {
+                try {
+                    port = Integer.parseInt(portValue);
+                } catch (NumberFormatException e) {
+                    LOG.debugf("Invalid port value for endpoint %d: %s, defaulting to 0", i, portValue);
+                    // port stays 0
+                }
             }
 
             HttpEndpoint.Builder endpointBuilder = HttpEndpoint.newBuilder()

@@ -1,67 +1,66 @@
 # Platform Registration Service
 
-The Platform Registration Service is the central nervous system for service discovery and management in the pipeline platform. It acts as a comprehensive service registry, health monitoring system, and module management hub for all services and modules in the platform.
+The Platform Registration Service manages service discovery and health monitoring for the pipeline platform. It keeps track of all running services, modules, and connectors, ensuring they are reachable and healthy.
 
 ## Overview
 
-This service provides real-time service discovery, health monitoring, and configuration management for the entire pipeline ecosystem. It maintains a live directory of all running services, their locations, capabilities, and their health status while managing configuration schemas and publishing events for downstream systems.
+This service maintains a registry of every component in the platform. When a service starts, it registers itself here with its location and capabilities. The registration service then monitors its health, manages its configuration schemas, and notifies other systems about its status through Kafka events.
 
-### Architectural Role and Importance
+This service is used by other components in the platform to discover and communicate with each other.  The frontend uses this service as a way to act as a proxy to consul, which is not accessible from the outside world.  The frontend also uses this service to retrieve configuration schemas for modules and connectors.  It's central in the role of the frontend and backend - the engine cannot process without it.
 
-While this service manages the lifecycle of other platform components, it also plays a vital role in enforcing standards and reducing complexity across the ecosystem. It should be considered the **single source of truth** for service registration and the primary gateway for service interaction.
+### Architectural Role
 
-#### 1. Centralized Governance and Standard Enforcement
+This service is the source of truth for service discovery. By centralizing registration, we ensure all components follow the same standards for health checks and metadata.
 
-By acting as the sole entry point for service registration, this service enforces a unified standard for how new services are introduced to the platform. Instead of services implementing their own Consul registration or Kafka announcement logic, they simply make a gRPC call to this service. The registration service then orchestrates the entire process:
+#### 1. Unified Registration
 
-*   Validating the service's metadata and configuration schema.
-*   Registering the service in Consul with the correct health checks.
-*   Broadcasting the `ServiceRegistered` event to the appropriate Kafka topic.
+Instead of each service talking to Consul or Kafka directly, they make a single gRPC call to this service. The registration service then handles:
 
-This pattern ensures that all services are registered consistently and correctly, simplifying development and improving platform stability.
+*   Validating the metadata and configuration schema.
+*   Registering the service in Consul with health checks.
+*   Broadcasting registration events to Kafka.
 
-#### 2. Sidecar for the Frontend
+This ensures consistency across the platform and simplifies the logic needed in each individual service.
 
-The `platform-registration-service` acts as a **secure sidecar** for the web frontend. The frontend's Node.js backend (using Connect-ES) communicates with this service's gRPC endpoints instead of directly with Consul. This design was chosen deliberately because the available Node.js Consul clients are not well-maintained.
+#### 2. Registration Types
 
-This creates several advantages:
-*   **Security Boundary:** It avoids exposing the Consul API directly to the frontend's network boundary.
-*   **Abstraction:** The frontend does not need to know about the underlying service discovery mechanism (Consul), which could be swapped in the future without impacting the UI.
-*   **Stability:** It insulates the frontend from potential issues with third-party Node.js libraries for Consul.
+The platform supports three distinct types of components:
+
+*   **Services**: Core platform components like the API Gateway or Auth Service. These are registered in Consul for discovery and health monitoring.
+*   **Modules**: Specialized processing units (e.g., OCR, NLP). Registration involves a callback where the platform fetches versioned configuration schemas and metadata directly from the module.
+*   **Connectors**: Integration points for external systems (e.g., S3, Kafka, PostgreSQL). These are registered for discovery and can also provide schemas for their source/sink configurations.
+
+#### 3. Frontend Sidecar
+
+The `platform-registration-service` also serves as an entry point for the web frontend. The frontend's Node.js backend communicates with this service's gRPC endpoints instead of talking to Consul directly. This provides a clear security boundary and abstracts the underlying discovery mechanism.
 
 ### Core Functions
 
 **Service Registration & Discovery**
-- Central registry where services announce themselves
-- Real-time directory of all running services with locations and capabilities
-- Service resolution with filtering by tags and capabilities
-- Support for both general services and specialized document processing modules
+*   Registry for services, modules, and connectors.
+*   Directory of running services with their locations and capabilities.
+*   Filtering by tags and capabilities.
 
 **Health Monitoring**
-- Continuous health monitoring using gRPC health checks through Consul
-- Automatic cleanup of unhealthy services
-- Health status tracking and reporting
-- Readiness probes for dependent services
+*   Continuous monitoring using gRPC health checks.
+*   Automatic removal of unhealthy services.
+*   Readiness probes for dependencies.
 
-**Module Management**
-- Specialized handling for document processing modules
-- Configuration schema validation and storage
-- Module metadata management
-- Integration with dynamic gRPC client factory
+**Module & Connector Management**
+*   Schema validation for processing modules and data connectors.
+*   Versioned configuration storage.
+*   Integration with the dynamic gRPC client factory.
 
 **Schema Management**
-- Dual storage: MySQL as primary, Apicurio Registry as secondary
-- OpenAPI/JSON Schema validation and versioning
-- Automatic schema synchronization
-- Centralized schema retrieval via `getModuleSchema()` RPC
-- Three-tier retrieval: Database → Apicurio → Module Direct Call
-- Schema discovery and retrieval with version support
+*   Storage: PostgreSQL for metadata and Apicurio Registry for schema versions.
+*   JSON Schema validation and versioning.
+*   Automatic schema synchronization between the database and Apicurio.
+*   Multi-tier schema retrieval (Database → Apicurio → Direct Call).
 
 **Event Streaming**
-- Publishes registration/unregistration events to Kafka
-- Integration with OpenSearch for service indexing
-- Protobuf-based event serialization
-- Fire-and-forget event publishing
+*   Publishes registration and unregistration events to Kafka.
+*   Integrates with OpenSearch for indexing.
+*   Uses Protobuf for event serialization.
 
 **Self-Registration**
 - Automatically registers itself with Consul on startup
@@ -73,29 +72,20 @@ This creates several advantages:
 ### Technology Stack
 
 **Backend**
-- **Framework**: Quarkus with reactive programming (Mutiny)
-- **Database**: MySQL with Hibernate Reactive Panache
-- **Service Discovery**: Consul integration with Vert.x client
-- **Schema Registry**: Apicurio Registry v3
-- **Messaging**: Kafka with SmallRye Reactive Messaging
-- **API**: gRPC with Connect-RPC for web clients
-- **Health**: MicroProfile Health with readiness probes
-- **Metrics**: Prometheus integration
-- **Logging**: JBoss LogManager with file rotation
+*   **Framework**: Quarkus with reactive programming (Mutiny)
+*   **Database**: PostgreSQL with Hibernate Reactive Panache
+*   **Service Discovery**: Consul
+*   **Schema Registry**: Apicurio Registry v3
+*   **Messaging**: Kafka with SmallRye Reactive Messaging
+*   **API**: gRPC with Connect-RPC support
 
 **Frontend**
-- **Framework**: Vue 3 with Composition API
-- **UI Library**: Vuetify 3
-- **Build Tool**: Vite
-- **Integration**: Quinoa for seamless Quarkus integration
-- **Routing**: Vue Router for SPA navigation
-
-**Infrastructure**
-- **Container**: Docker with UBI9/OpenJDK 21
-- **Runtime**: Java 21 with reactive programming
-- **Networking**: gRPC over HTTP with Connect-RPC
+*   **Framework**: Vue 3 with Vuetify 3
+*   **Build Tool**: Vite with Quinoa integration
 
 ## Database Schema
+
+We use PostgreSQL to store metadata about registered modules and their configuration schemas.
 
 ### Modules Table
 ```sql
@@ -106,10 +96,10 @@ CREATE TABLE modules (
     port INTEGER NOT NULL,
     version VARCHAR(100),
     config_schema_id VARCHAR(255),
-    metadata JSON,
-    registered_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    last_heartbeat DATETIME(6),
-    status ENUM('ACTIVE','INACTIVE','MAINTENANCE','UNHEALTHY') NOT NULL DEFAULT 'ACTIVE'
+    metadata JSONB,
+    registered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_heartbeat TIMESTAMP,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
 );
 ```
 
@@ -119,13 +109,13 @@ CREATE TABLE config_schemas (
     schema_id VARCHAR(255) PRIMARY KEY,
     service_name VARCHAR(255) NOT NULL,
     schema_version VARCHAR(100) NOT NULL,
-    json_schema JSON NOT NULL,
-    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    json_schema JSONB NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_by VARCHAR(255),
     apicurio_artifact_id VARCHAR(255),
     apicurio_global_id BIGINT,
-    sync_status ENUM('FAILED','OUT_OF_SYNC','PENDING','SYNCED') NOT NULL DEFAULT 'PENDING',
-    last_sync_attempt DATETIME(6),
+    sync_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    last_sync_attempt TIMESTAMP,
     sync_error VARCHAR(255),
     CONSTRAINT unique_service_schema_version UNIQUE(service_name, schema_version)
 );
@@ -152,7 +142,7 @@ export GITHUB_TOKEN=your-personal-access-token
 ./gradlew clean build -x test
 ```
 
-> **Tip:** Remove `-x test` once you have the required infrastructure (MySQL, Kafka, Consul) running locally or via Testcontainers.
+> **Tip:** Remove `-x test` once you have the required infrastructure (PostgreSQL, Kafka, Consul) running locally or via Testcontainers.  This is automatically setup via Quarkus Dev Services through the compose plugin.  If you have docker and jdk21 installed, tests should work.
 
 ### Build & Run the Docker Image
 You can let Quarkus build the image or build it manually with Docker.
@@ -180,7 +170,7 @@ docker run -p 38101:8080 platform-registration-service:local
 ### Troubleshooting
 - **401 from GitHub Packages** – double-check `GITHUB_ACTOR`/`GITHUB_TOKEN`.
 - **Docker build fails** – ensure `./gradlew quarkusBuild` succeeded so that `build/quarkus-app/` exists.
-- **Tests fail** – services like MySQL, Kafka, and Consul must be available; skip tests until you’re ready to configure them.
+- **Tests fail** – services like PostgreSQL, Kafka, and Consul must be available; skip tests until you’re ready to configure them.
 
 ## Docker Build Process
 
@@ -243,8 +233,8 @@ JAVA_OPTS_APPEND="-Dquarkus.http.host=0.0.0.0 -Djava.util.logging.manager=org.jb
 QUARKUS_PROFILE=prod
 
 # Database Configuration (if not using service discovery)
-QUARKUS_DATASOURCE_JDBC_URL=jdbc:mysql://mysql:3306/pipeline_registry
-QUARKUS_DATASOURCE_USERNAME=registration_user
+QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://postgres:5432/platform_registration
+QUARKUS_DATASOURCE_USERNAME=pipeline
 QUARKUS_DATASOURCE_PASSWORD=password
 
 # Kafka Configuration
@@ -283,7 +273,7 @@ For containerized integration testing, use the centralized `docker-integration-t
 ```bash
 cd /path/to/ai-pipestream/docker-integration-tests
 
-# Start shared infrastructure (MySQL, Kafka, Consul, Apicurio, etc.)
+# Start shared infrastructure (PostgreSQL, Kafka, Consul, Apicurio, etc.)
 docker compose up -d
 
 # Start platform-registration-service with infrastructure
@@ -363,7 +353,7 @@ pnpm run dev
 ```
 
 **Integration Testing**:
-- Uses Testcontainers for MySQL
+- Uses Testcontainers for PostgreSQL
 - Mock Consul and Apicurio for unit tests
 - End-to-end tests with real infrastructure
 
@@ -401,31 +391,32 @@ The `getModuleSchema` RPC method provides centralized access to module configura
 - `metadata`: Map of additional metadata (owner, description, created_by, etc.)
 - `updated_at`: Timestamp of when the schema was last updated
 
-**Retrieval Strategy (Three-Tier):**
-1. **Database (Primary)**: Checks MySQL database (system of record)
-2. **Apicurio Registry (Secondary)**: Falls back to Apicurio if not in database
-3. **Module Direct Call (Tertiary)**: Calls module's `getServiceRegistration()` if schema not in registry
-4. **Synthesis (Fallback)**: Generates a default OpenAPI 3.1 schema if module provides none
+**Retrieval Strategy:**
+The service uses a multi-tier approach to retrieve schemas:
+1.  **PostgreSQL (Primary)**: Checks the local database for the system of record.
+2.  **Apicurio Registry (Secondary)**: Falls back to Apicurio if the schema is not found in the database.
+3.  **Direct Call (Tertiary)**: Calls the component's `getServiceRegistration()` endpoint directly.
+4.  **Synthesis (Fallback)**: Generates a default OpenAPI 3.1 schema if no other source is available.
 
 **Example Usage (Frontend):**
 ```typescript
 const client = createPlatformRegistrationClient();
 
-// Get latest version
-const response = await client.getModuleSchema({
+// Get the latest schema
+const latestResponse = await client.getModuleSchema({
   serviceName: 'pdf-extractor'
 });
 
-// Get specific version
-const response = await client.getModuleSchema({
+// Get a specific version
+const versionedResponse = await client.getModuleSchema({
   serviceName: 'pdf-extractor',
   version: '2.1.0'
 });
 
-const schema = JSON.parse(response.schemaJson);
-console.log('Schema version:', response.schemaVersion);
-console.log('Artifact ID:', response.artifactId);
-console.log('Metadata:', response.metadata);
+const schema = JSON.parse(latestResponse.schemaJson);
+console.log('Schema version:', latestResponse.schemaVersion);
+console.log('Artifact ID:', latestResponse.artifactId);
+console.log('Metadata:', latestResponse.metadata);
 ```
 
 **Benefits:**
@@ -463,7 +454,7 @@ console.log('Metadata:', response.metadata);
 - Request/response logging for gRPC calls
 
 ### Health Checks
-- **Dependent Services**: MySQL, Consul, Apicurio Registry
+- **Dependent Services**: PostgreSQL, Consul, Apicurio Registry
 - **Service Health**: gRPC health service integration
 - **Readiness**: All dependencies must be healthy
 - **Liveness**: Application must be responding
@@ -480,61 +471,37 @@ quarkus.http.port=38101
 quarkus.grpc.server.use-separate-server=false
 
 # Database
-quarkus.datasource.db-kind=mysql
+quarkus.datasource.db-kind=postgresql
 quarkus.hibernate-orm.schema-management.strategy=none
 quarkus.flyway.migrate-at-start=true
-
-# Consul
-pipeline.consul.enabled=true
-pipeline.consul.host=localhost
-pipeline.consul.port=8500
-
-# Apicurio Registry
-apicurio.registry.url=http://localhost:8081
-
-# Kafka
-kafka.bootstrap.servers=localhost:9092
 ```
-
-**Profiles**:
-- `dev` - Development with hot reload and debug logging
-- `test` - Testing with embedded services
-- `prod` - Production with optimized settings
-- `docker` - Container-specific configuration
 
 ## Troubleshooting
 
+If you encounter issues during registration or discovery, check the following areas.
+
 ### Common Issues
 
-**Service Registration Fails**:
-- Check Consul connectivity
-- Verify service health endpoints
-- Review gRPC health service implementation
+*   **Registration Failures**: Usually caused by connectivity issues with Consul. Verify that the service can reach Consul and that the gRPC health service is correctly implemented in the registering service.
+*   **Database Connectivity**: Ensure PostgreSQL is running and the credentials match what is in `application.properties`. If you see migration errors, check the Flyway status.
+*   **Schema Sync**: If schemas aren't appearing in Apicurio, check the `config_schemas` table for sync errors.
 
-**Database Connection Issues**:
-- Verify MySQL is running and accessible
-- Check database credentials and permissions
-- Review Flyway migration status
+### Debugging
 
-**Schema Sync Failures**:
-- Check Apicurio Registry connectivity
-- Verify schema format and validation
-- Review sync status in database
+To get more detailed information about what's happening internally, you can enable trace logging for specific packages in `application.properties`:
 
-**Frontend Not Loading**:
-- Check Quinoa build process
-- Verify Vue.js dependencies
-- Review browser console for errors
-
-### Debug Mode
-
-**Enable Debug Logging**:
 ```properties
-quarkus.log.level=DEBUG
-quarkus.log.category."io.pipeline.registration".level=TRACE
+# Trace platform registration logic
+quarkus.log.category."ai.pipestream.registration".level=TRACE
+
+# Debug Consul service discovery
+quarkus.log.category."io.vertx.consul".level=DEBUG
+
+# Debug database queries
+quarkus.log.category."org.hibernate.SQL".level=DEBUG
 ```
 
-**Remote Debugging**:
+For remote debugging in a container, run with `JAVA_DEBUG=true`:
 ```bash
 docker run -e JAVA_DEBUG=true -e JAVA_DEBUG_PORT=*:5005 -p 5005:5005 platform-registration-service
 ```

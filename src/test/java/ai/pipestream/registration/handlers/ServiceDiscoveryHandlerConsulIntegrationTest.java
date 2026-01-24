@@ -4,6 +4,8 @@ import ai.pipestream.platform.registration.v1.GetServiceResponse;
 import ai.pipestream.platform.registration.v1.HttpEndpoint;
 import ai.pipestream.platform.registration.v1.ResolveServiceRequest;
 import ai.pipestream.platform.registration.v1.ResolveServiceResponse;
+import ai.pipestream.test.support.ConsulTestResource;
+import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.ext.consul.ConsulClient;
@@ -20,9 +22,10 @@ import static org.hamcrest.Matchers.*;
 /**
  * Integration test for ServiceDiscoveryHandler using real Consul.
  * This test validates that HTTP endpoint metadata is correctly stored in and retrieved from Consul
- * via DevServices without mocking the client.
+ * via ConsulTestResource which starts a real Consul container.
  */
 @QuarkusTest
+@QuarkusTestResource(ConsulTestResource.class)
 class ServiceDiscoveryHandlerConsulIntegrationTest {
 
     @Inject

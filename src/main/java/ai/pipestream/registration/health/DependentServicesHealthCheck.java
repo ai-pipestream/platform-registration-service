@@ -19,7 +19,7 @@ import java.time.Duration;
  * - gRPC: grpc.health.v1.Health service
  * <p>
  * Services checked:
- * - MySQL (service registry database)
+ * - PostgreSQL (service registry database)
  * - Consul (service discovery backend)
  * - Apicurio Registry (schema storage)
  */
@@ -28,7 +28,7 @@ import java.time.Duration;
 public class DependentServicesHealthCheck implements HealthCheck {
 
     @Inject
-    Pool mysqlClient;
+    Pool databasePool;
     
     @Inject
     ConsulClient consulClient;
@@ -41,8 +41,8 @@ public class DependentServicesHealthCheck implements HealthCheck {
         HealthCheckResponseBuilder responseBuilder = HealthCheckResponse.named("dependent-services")
                 .up();
 
-        // Check MySQL (reactive)
-        checkMySQL(responseBuilder);
+        // Check Database (reactive)
+        checkDatabase(responseBuilder);
         
         // Check Consul
         checkConsul(responseBuilder);
@@ -53,18 +53,18 @@ public class DependentServicesHealthCheck implements HealthCheck {
         return responseBuilder.build();
     }
 
-    private void checkMySQL(HealthCheckResponseBuilder builder) {
+    private void checkDatabase(HealthCheckResponseBuilder builder) {
         try {
-            // Use reactive MySQL client to check connection
-            mysqlClient.query("SELECT 1")
+            // Use reactive database client to check connection
+            databasePool.query("SELECT 1")
                     .execute()
                     .await()
                     .atMost(Duration.ofSeconds(2));
-            builder.withData("mysql", "UP")
-                   .withData("mysql-details", "Service registry database is accessible");
+            builder.withData("database", "UP")
+                   .withData("database-details", "Service registry database is accessible");
         } catch (Exception e) {
-            builder.withData("mysql", "DOWN")
-                   .withData("mysql-error", e.getMessage())
+            builder.withData("database", "DOWN")
+                   .withData("database-error", e.getMessage())
                    .down();
         }
     }

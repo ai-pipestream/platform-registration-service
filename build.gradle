@@ -91,6 +91,9 @@ dependencies {
     testImplementation libs.rest.assured
     testImplementation libs.wiremock.standalone
     testImplementation libs.wiremock.grpc.extension.standalone
+    // Pipestream test support for ConsulTestResource and other test utilities
+    // Using explicit version as test-support has its own release cycle
+    testImplementation(testFixtures("ai.pipestream:pipestream-test-support:0.1.30-SNAPSHOT"))
     runtimeOnly libs.quarkus.logging.manager
 }
 

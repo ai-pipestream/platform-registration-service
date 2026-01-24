@@ -50,6 +50,10 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
             case SERVICE_TYPE_SERVICE:
                 events = serviceRegistrationHandler.registerService(request);
                 break;
+            case SERVICE_TYPE_CONNECTOR:
+                LOG.infof("Routing connector registration for %s to service handler", request.getName());
+                events = serviceRegistrationHandler.registerService(request);
+                break;
             case SERVICE_TYPE_MODULE:
                 events = moduleRegistrationHandler.registerModule(request);
                 break;
@@ -58,7 +62,7 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
             default:
                 LOG.errorf("Invalid service type: %s", type);
                 return Multi.createFrom().failure(
-                    new IllegalArgumentException("Must specify service type: SERVICE_TYPE_SERVICE or SERVICE_TYPE_MODULE"));
+                    new IllegalArgumentException("Must specify service type: SERVICE_TYPE_SERVICE, SERVICE_TYPE_MODULE, or SERVICE_TYPE_CONNECTOR"));
         }
         
         // Wrap RegistrationEvent in RegisterResponse
