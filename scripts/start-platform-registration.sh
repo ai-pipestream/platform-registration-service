@@ -108,7 +108,7 @@ if check_port "$SERVICE_PORT" "$SERVICE_NAME"; then
 fi
 
 print_status "info" "Starting $SERVICE_NAME in Quarkus dev mode..."
-print_status "info" "DevServices will automatically start: MySQL, Consul, etc."
+print_status "info" "DevServices will automatically start: PostgreSQL, Consul, etc."
 print_status "info" "Press Ctrl+C to stop"
 echo
 
