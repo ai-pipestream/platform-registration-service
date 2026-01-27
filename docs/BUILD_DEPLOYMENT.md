@@ -246,6 +246,14 @@ docker run -d \
 ./gradlew publishToMavenLocal
 ```
 
+### CI/Testcontainers Requirements
+- Tests spin up containers for Consul and Apicurio via DevServices.
+- Schema fallback tests use the `pipestream-wiremock-server` container (0.1.32+).
+- CI runners must have Docker available for Testcontainers.
+- Override the WireMock image if needed:
+  - Environment: `PIPESTREAM_WIREMOCK_IMAGE=docker.io/pipestreamai/pipestream-wiremock-server:0.1.32`
+  - System property: `-Dpipestream.wiremock.image=docker.io/pipestreamai/pipestream-wiremock-server:0.1.32`
+
 ### Docker Build Locally
 ```bash
 # Build Docker image locally
