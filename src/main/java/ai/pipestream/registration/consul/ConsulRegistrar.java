@@ -125,8 +125,9 @@ public class ConsulRegistrar {
                     String checkHost = endpoint.getHost().isBlank() ? consulHost : endpoint.getHost();
                     int checkPort = endpoint.getPort() == 0 ? consulPort : endpoint.getPort();
                     
-                    String checkUrl = String.format("%s://%s:%d%s", 
-                        scheme, checkHost, checkPort, endpoint.getHealthPath());
+                    String effectiveHealthPath = joinPaths(endpoint.getBasePath(), endpoint.getHealthPath());
+                    String checkUrl = String.format("%s://%s:%d%s",
+                        scheme, checkHost, checkPort, effectiveHealthPath);
                     
                     checkOptions.setHttp(checkUrl);
                     checkOptions.setName(request.getName() + " HTTP Health Check");
@@ -198,5 +199,41 @@ public class ConsulRegistrar {
             sanitized.put(sanitizedKey, entry.getValue());
         }
         return sanitized;
+    }
+
+    private static String joinPaths(String basePath, String healthPath) {
+        String base = basePath == null ? "" : basePath.trim();
+        String health = healthPath == null ? "" : healthPath.trim();
+        if (health.isEmpty()) {
+            return ensureLeadingSlash(base);
+        }
+        if (base.isEmpty() || "/".equals(base)) {
+            return ensureLeadingSlash(health);
+        }
+
+        String normalizedBase = ensureLeadingSlash(stripTrailingSlash(base));
+        String normalizedHealth = ensureLeadingSlash(health);
+        if (normalizedHealth.equals(normalizedBase) || normalizedHealth.startsWith(normalizedBase + "/")) {
+            return normalizedHealth;
+        }
+        return normalizedBase + normalizedHealth;
+    }
+
+    private static String ensureLeadingSlash(String path) {
+        if (path == null || path.isEmpty()) {
+            return "";
+        }
+        return path.charAt(0) == '/' ? path : "/" + path;
+    }
+
+    private static String stripTrailingSlash(String path) {
+        if (path == null || path.isEmpty()) {
+            return "";
+        }
+        int end = path.length();
+        while (end > 1 && path.charAt(end - 1) == '/') {
+            end--;
+        }
+        return path.substring(0, end);
     }
 }
