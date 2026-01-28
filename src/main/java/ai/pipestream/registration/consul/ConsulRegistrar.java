@@ -124,10 +124,16 @@ public class ConsulRegistrar {
                     
                     String checkHost = endpoint.getHost().isBlank() ? consulHost : endpoint.getHost();
                     int checkPort = endpoint.getPort() == 0 ? consulPort : endpoint.getPort();
-                    
-                    String effectiveHealthPath = joinPaths(endpoint.getBasePath(), endpoint.getHealthPath());
-                    String checkUrl = String.format("%s://%s:%d%s",
-                        scheme, checkHost, checkPort, effectiveHealthPath);
+                    String rawHealthPath = endpoint.getHealthPath();
+                    String checkUrl;
+                    if (rawHealthPath.contains("://")) {
+                        checkUrl = rawHealthPath;
+                        LOG.debugf("Using absolute health URL override for %s: %s", serviceId, checkUrl);
+                    } else {
+                        String effectiveHealthPath = joinPaths(endpoint.getBasePath(), rawHealthPath);
+                        checkUrl = String.format("%s://%s:%d%s",
+                            scheme, checkHost, checkPort, effectiveHealthPath);
+                    }
                     
                     checkOptions.setHttp(checkUrl);
                     checkOptions.setName(request.getName() + " HTTP Health Check");

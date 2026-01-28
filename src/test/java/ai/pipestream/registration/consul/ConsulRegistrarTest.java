@@ -44,6 +44,7 @@ class ConsulRegistrarTest {
         int port = 8080;
         String serviceId = ConsulRegistrar.generateServiceId(serviceName, host, port);
         String healthPath = "/health";
+        String basePath = "/account";
 
         RegisterRequest request = RegisterRequest.newBuilder()
                 .setName(serviceName)
@@ -57,6 +58,7 @@ class ConsulRegistrarTest {
                         .setScheme("http")
                         .setHost(host)
                         .setPort(port)
+                        .setBasePath(basePath)
                         .setHealthPath(healthPath)
                         .build())
                 .build();
@@ -81,6 +83,82 @@ class ConsulRegistrarTest {
         // We want the opposite.
         assertNull(checkOptions.getGrpc(), "Should NOT have gRPC check configured for HTTP service");
         assertNotNull(checkOptions.getHttp(), "Should have HTTP check configured");
+        assertEquals("http://" + host + ":" + port + basePath + healthPath, checkOptions.getHttp());
+    }
+
+    @Test
+    void registerService_shouldAvoidDoubleBasePath_whenHealthPathAlreadyIncludesBasePath() {
+        String serviceName = "my-http-service";
+        String host = "10.0.0.1";
+        int port = 8080;
+        String serviceId = ConsulRegistrar.generateServiceId(serviceName, host, port);
+        String basePath = "/account";
+        String healthPath = "/account/q/health";
+
+        RegisterRequest request = RegisterRequest.newBuilder()
+                .setName(serviceName)
+                .setType(ServiceType.SERVICE_TYPE_SERVICE)
+                .setVersion("1.0.0")
+                .setConnectivity(Connectivity.newBuilder()
+                        .setAdvertisedHost(host)
+                        .setAdvertisedPort(port)
+                        .build())
+                .addHttpEndpoints(HttpEndpoint.newBuilder()
+                        .setScheme("http")
+                        .setHost(host)
+                        .setPort(port)
+                        .setBasePath(basePath)
+                        .setHealthPath(healthPath)
+                        .build())
+                .build();
+
+        when(consulClient.registerService(any(ServiceOptions.class)))
+                .thenReturn(Uni.createFrom().voidItem());
+
+        consulRegistrar.registerService(request, serviceId).await().indefinitely();
+
+        ArgumentCaptor<ServiceOptions> optionsCaptor = ArgumentCaptor.forClass(ServiceOptions.class);
+        verify(consulClient).registerService(optionsCaptor.capture());
+
+        CheckOptions checkOptions = optionsCaptor.getValue().getCheckOptions();
+        assertNotNull(checkOptions.getHttp(), "Should have HTTP check configured");
         assertEquals("http://" + host + ":" + port + healthPath, checkOptions.getHttp());
+    }
+
+    @Test
+    void registerService_shouldUseAbsoluteHealthUrl_whenProvided() {
+        String serviceName = "my-http-service";
+        String host = "10.0.0.1";
+        int port = 8080;
+        String serviceId = ConsulRegistrar.generateServiceId(serviceName, host, port);
+        String healthUrl = "http://health-host:9000/custom/ready";
+
+        RegisterRequest request = RegisterRequest.newBuilder()
+                .setName(serviceName)
+                .setType(ServiceType.SERVICE_TYPE_SERVICE)
+                .setVersion("1.0.0")
+                .setConnectivity(Connectivity.newBuilder()
+                        .setAdvertisedHost(host)
+                        .setAdvertisedPort(port)
+                        .build())
+                .addHttpEndpoints(HttpEndpoint.newBuilder()
+                        .setScheme("http")
+                        .setHost(host)
+                        .setPort(port)
+                        .setHealthPath(healthUrl)
+                        .build())
+                .build();
+
+        when(consulClient.registerService(any(ServiceOptions.class)))
+                .thenReturn(Uni.createFrom().voidItem());
+
+        consulRegistrar.registerService(request, serviceId).await().indefinitely();
+
+        ArgumentCaptor<ServiceOptions> optionsCaptor = ArgumentCaptor.forClass(ServiceOptions.class);
+        verify(consulClient).registerService(optionsCaptor.capture());
+
+        CheckOptions checkOptions = optionsCaptor.getValue().getCheckOptions();
+        assertNotNull(checkOptions.getHttp(), "Should have HTTP check configured");
+        assertEquals(healthUrl, checkOptions.getHttp());
     }
 }
