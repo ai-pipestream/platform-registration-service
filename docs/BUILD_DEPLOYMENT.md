@@ -248,11 +248,11 @@ docker run -d \
 
 ### CI/Testcontainers Requirements
 - Tests spin up containers for Consul and Apicurio via DevServices.
-- Schema fallback tests use the `pipestream-wiremock-server` container (0.1.32+).
+- Schema fallback tests use the `pipestream-wiremock-server` container (0.1.33+).
 - CI runners must have Docker available for Testcontainers.
 - Override the WireMock image if needed:
-  - Environment: `PIPESTREAM_WIREMOCK_IMAGE=docker.io/pipestreamai/pipestream-wiremock-server:0.1.32`
-  - System property: `-Dpipestream.wiremock.image=docker.io/pipestreamai/pipestream-wiremock-server:0.1.32`
+  - Environment: `PIPESTREAM_WIREMOCK_IMAGE=docker.io/pipestreamai/pipestream-wiremock-server:0.1.33`
+  - System property: `-Dpipestream.wiremock.image=docker.io/pipestreamai/pipestream-wiremock-server:0.1.33`
 
 ### Docker Build Locally
 ```bash

@@ -82,6 +82,7 @@ dependencies {
 
     // Pipestream devservices extension - version managed by pipestream-bom
     implementation 'ai.pipestream:pipestream-quarkus-devservices'
+    implementation 'ai.pipestream:pipestream-server'
 
     // Testing - using TOML catalog where available
     testImplementation libs.quarkus.junit5
@@ -273,4 +274,3 @@ nmcp {
         baseUrl = "https://central.sonatype.com/"
     }
 }
-

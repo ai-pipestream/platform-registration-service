@@ -22,7 +22,6 @@ import java.util.Map;
  * calls the local ServiceRegistrationHandler directly.
  */
 @ApplicationScoped
-@io.quarkus.arc.properties.IfBuildProperty(name = "service.registration.enabled", stringValue = "true")
 public class SelfRegistrationService {
 
     private static final Logger LOG = Logger.getLogger(SelfRegistrationService.class);
@@ -47,6 +46,12 @@ public class SelfRegistrationService {
 
     @ConfigProperty(name = "service.registration.port", defaultValue = "0")
     int servicePort;
+
+    @ConfigProperty(name = "service.registration.internal-host", defaultValue = "")
+    String internalHost;
+
+    @ConfigProperty(name = "service.registration.internal-port", defaultValue = "0")
+    int internalPort;
 
     @ConfigProperty(name = "service.registration.capabilities", defaultValue = "")
     String capabilities;
@@ -98,15 +103,19 @@ public class SelfRegistrationService {
      */
     private RegisterRequest buildRegisterRequest() {
         // Build connectivity information
-        Connectivity connectivity = Connectivity.newBuilder()
+        Connectivity.Builder connectivity = Connectivity.newBuilder()
             .setAdvertisedHost(determineHost())
-            .setAdvertisedPort(servicePort)
-            .build();
+            .setAdvertisedPort(servicePort);
+
+        if (!internalHost.isBlank()) {
+            connectivity.setInternalHost(internalHost);
+            connectivity.setInternalPort(internalPort > 0 ? internalPort : servicePort);
+        }
 
         RegisterRequest.Builder builder = RegisterRequest.newBuilder()
             .setName(serviceName)
             .setType(ServiceType.SERVICE_TYPE_SERVICE)
-            .setConnectivity(connectivity)
+            .setConnectivity(connectivity.build())
             .setVersion(version);
 
         // Add metadata
