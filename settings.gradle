@@ -1,5 +1,34 @@
 pluginManagement {
     repositories {
+        // Allow locally published Pipestream plugins (e.g., proto-toolchain SNAPSHOTs)
+        mavenLocal {
+            content {
+                includeGroupByRegex "ai\\.pipestream(\\..*)?"
+            }
+        }
+
+        // GitHub Packages (optional) for Pipestream plugins if credentials are provided
+        def githubToken = providers.environmentVariable("GITHUB_TOKEN")
+            .orElse(providers.gradleProperty("gpr.key"))
+            .orElse(providers.environmentVariable("GPR_TOKEN"))
+
+        def githubActor = providers.environmentVariable("GITHUB_ACTOR")
+            .orElse(providers.gradleProperty("gpr.user"))
+            .orElse(providers.environmentVariable("GPR_USER"))
+
+        if (githubToken.isPresent() && githubActor.isPresent()) {
+            maven {
+                url = uri("https://maven.pkg.github.com/ai-pipestream/bom")
+                credentials {
+                    username = githubActor.get()
+                    password = githubToken.get()
+                }
+                content {
+                    includeGroupByRegex "ai\\.pipestream(\\..*)?"
+                }
+            }
+        }
+
         gradlePluginPortal()
     }
     resolutionStrategy {
