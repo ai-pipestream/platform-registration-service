@@ -102,16 +102,20 @@ public class ConsulRegistrar {
 
         // Health checks use the same address as the service registration
         // (Consul will use the service's registered address for health checks)
-        String healthCheckHost = consulHost;
-        int healthCheckPort = consulPort;
-        
-        CheckOptions checkOptions = new CheckOptions()
-                .setName(request.getName() + " Health Check")
-                .setInterval("10s")
-                .setDeregisterAfter("1m");
 
-        // Check for HTTP health check configuration first
-        boolean httpCheckConfigured = false;
+        boolean grpcTlsEnabled = connectivity.getTlsEnabled();
+        ArrayList<CheckOptions> grpcChecks = new ArrayList<>();
+        if (request.getGrpcServicesCount() > 0) {
+            grpcChecks.add(buildGrpcCheck(request.getName(), consulHost, consulPort, grpcTlsEnabled, null));
+            request.getGrpcServicesList().stream()
+                    .map(String::trim)
+                    .filter(name -> !name.isEmpty())
+                    .distinct()
+                    .forEach(serviceName ->
+                            grpcChecks.add(buildGrpcCheck(request.getName(), consulHost, consulPort, grpcTlsEnabled, serviceName)));
+        }
+
+        CheckOptions httpCheck = null;
         if (request.getHttpEndpointsCount() > 0) {
             // Find the first endpoint with a health path
             for (var endpoint : request.getHttpEndpointsList()) {
@@ -135,23 +139,27 @@ public class ConsulRegistrar {
                             scheme, checkHost, checkPort, effectiveHealthPath);
                     }
                     
-                    checkOptions.setHttp(checkUrl);
-                    checkOptions.setName(request.getName() + " HTTP Health Check");
+                    httpCheck = new CheckOptions()
+                            .setName(request.getName() + " HTTP Health Check")
+                            .setInterval("10s")
+                            .setDeregisterAfter("1m")
+                            .setHttp(checkUrl);
                     LOG.infof("Configuring HTTP health check for %s: %s", serviceId, checkUrl);
-                    httpCheckConfigured = true;
                     break;
                 }
             }
         }
-        
-        if (!httpCheckConfigured) {
-            // Fallback to gRPC health check
-            checkOptions.setName(request.getName() + " gRPC Health Check");
-            checkOptions.setGrpc(healthCheckHost + ":" + healthCheckPort);
-            LOG.infof("Configuring gRPC health check for %s: %s:%d", serviceId, healthCheckHost, healthCheckPort);
+
+        ArrayList<CheckOptions> checks = new ArrayList<>(grpcChecks);
+        if (httpCheck != null) {
+            checks.add(httpCheck);
         }
 
-        serviceOptions.setCheckOptions(checkOptions);
+        if (checks.size() == 1) {
+            serviceOptions.setCheckOptions(checks.getFirst());
+        } else {
+            serviceOptions.setCheckListOptions(checks);
+        }
 
         LOG.infof("Registering service with Consul: %s (type=%s)", serviceId, request.getType());
 
@@ -241,5 +249,34 @@ public class ConsulRegistrar {
             end--;
         }
         return path.substring(0, end);
+    }
+
+    private static CheckOptions buildGrpcCheck(String serviceName, String host, int port,
+                                               boolean tlsEnabled, String grpcServiceName) {
+        String target = formatGrpcTarget(host, port, grpcServiceName);
+        String checkName = grpcServiceName == null || grpcServiceName.isBlank()
+                ? serviceName + " gRPC Health Check"
+                : serviceName + " gRPC Health Check (" + grpcServiceName + ")";
+
+        CheckOptions check = new CheckOptions()
+                .setName(checkName)
+                .setInterval("10s")
+                .setDeregisterAfter("1m")
+                .setGrpc(target);
+
+        if (tlsEnabled) {
+            check.setGrpcTls(true);
+        }
+
+        LOG.infof("Configuring gRPC health check for %s: %s", serviceName, target);
+        return check;
+    }
+
+    private static String formatGrpcTarget(String host, int port, String serviceName) {
+        if (serviceName == null || serviceName.isBlank()) {
+            return host + ":" + port;
+        }
+        String normalized = serviceName.startsWith("/") ? serviceName.substring(1) : serviceName;
+        return host + ":" + port + "/" + normalized;
     }
 }

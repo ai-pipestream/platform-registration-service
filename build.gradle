@@ -85,10 +85,9 @@ dependencies {
     implementation 'ai.pipestream:pipestream-server'
 
     // Testing - using TOML catalog where available
-    testImplementation libs.quarkus.junit5
     testImplementation libs.quarkus.junit5.mockito
     testImplementation 'io.quarkus:quarkus-test-vertx'
-    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'
     testImplementation libs.rest.assured
     testImplementation libs.wiremock.standalone
     testImplementation libs.wiremock.grpc.extension.standalone
