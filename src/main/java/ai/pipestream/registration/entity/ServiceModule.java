@@ -42,13 +42,13 @@ public class ServiceModule extends PanacheEntityBase {
     public Map<String, Object> metadata = new HashMap<>();
     
     @CreationTimestamp
-    @Column(name = "registered_at")
+    @Column(name = "registered_at", nullable = false)
     public LocalDateTime registeredAt;
     
     @Column(name = "last_heartbeat")
     public LocalDateTime lastHeartbeat;
     
-    @Column
+    @Column(nullable = false)
     @Enumerated(EnumType.STRING)
     public ServiceStatus status = ServiceStatus.ACTIVE;
     

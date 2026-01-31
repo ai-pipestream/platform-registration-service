@@ -31,7 +31,7 @@ public class ConfigSchema extends PanacheEntityBase {
     public String jsonSchema;
     
     @CreationTimestamp
-    @Column(name = "created_at")
+    @Column(name = "created_at", nullable = false)
     public LocalDateTime createdAt;
     
     @Column(name = "created_by")
@@ -43,7 +43,7 @@ public class ConfigSchema extends PanacheEntityBase {
     @Column(name = "apicurio_global_id")
     public Long apicurioGlobalId;
     
-    @Column(name = "sync_status")
+    @Column(name = "sync_status", nullable = false)
     @Enumerated(EnumType.STRING)
     public SyncStatus syncStatus = SyncStatus.PENDING;
     
