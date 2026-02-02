@@ -34,7 +34,7 @@ pluginManagement {
     resolutionStrategy {
         eachPlugin {
             if (requested.id.id == "ai.pipestream.proto-toolchain") {
-                useVersion("0.7.13")
+                useVersion("0.7.14")
             }
         }
     }

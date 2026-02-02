@@ -16,6 +16,9 @@ import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.unchecked.Unchecked;
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.smallrye.common.vertx.VertxContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -50,6 +53,19 @@ public class ModuleRegistrationHandler {
 
     @Inject
     OpenSearchEventsProducer openSearchProducer;
+
+    @Inject
+    Vertx vertx;
+
+    private WebClient webClient;
+
+    @jakarta.annotation.PostConstruct
+    void init() {
+        WebClientOptions options = new WebClientOptions()
+                .setConnectTimeout(5000)
+                .setIdleTimeout(10);
+        this.webClient = WebClient.create(vertx, options);
+    }
 
     /**
      * Register a module with streaming status updates.
@@ -156,18 +172,41 @@ public class ModuleRegistrationHandler {
                     ))
                     .map(savedModule -> new DatabaseSaveContext(savedModule, metadata, schema));
             })
-            // After database is done, we can call Apicurio on worker thread
-            .chain(dbContext -> apicurioClient.createOrUpdateSchema(
-                    moduleName,
-                    request.getVersion(),
-                    dbContext.schema
-                )
-                .map(schemaResult -> new SavedContext(dbContext.module, schemaResult))
-                .onFailure().recoverWithItem(err -> {
-                    LOG.warnf(err, "Apicurio registration failed for %s:%s, continuing without registry sync",
-                            moduleName, request.getVersion());
-                    return new SavedContext(dbContext.module, null);
-                }))
+            // After database is done, register schemas to Apicurio (config + API spec concurrently)
+            .chain(dbContext -> {
+                // Register config schema
+                Uni<ApicurioRegistryClient.SchemaRegistrationResponse> configSchemaUni =
+                    apicurioClient.createOrUpdateSchema(moduleName, request.getVersion(), dbContext.schema)
+                        .onFailure().recoverWithItem(err -> {
+                            LOG.warnf(err, "Apicurio config schema registration failed for %s:%s, continuing without registry sync",
+                                    moduleName, request.getVersion());
+                            return null;
+                        });
+
+                // Fetch and register OpenAPI spec (if available)
+                Uni<ApicurioRegistryClient.SchemaRegistrationResponse> apiSchemaUni =
+                    fetchOpenApiSpec(host, port)
+                        .chain(openApiSpec -> {
+                            if (openApiSpec != null && !openApiSpec.isBlank()) {
+                                LOG.infof("Registering OpenAPI spec for %s:%s to Apicurio", moduleName, request.getVersion());
+                                return apicurioClient.createOrUpdateSchemaWithArtifactBase(
+                                        moduleName + "-api", request.getVersion(), openApiSpec)
+                                    .onFailure().recoverWithItem(err -> {
+                                        LOG.warnf(err, "Apicurio API schema registration failed for %s:%s, continuing without registry sync",
+                                                moduleName, request.getVersion());
+                                        return null;
+                                    });
+                            } else {
+                                LOG.debugf("No OpenAPI spec available for %s:%s, skipping API schema registration",
+                                        moduleName, request.getVersion());
+                                return Uni.createFrom().nullItem();
+                            }
+                        });
+
+                // Register both concurrently and combine results
+                return Uni.combine().all().unis(configSchemaUni, apiSchemaUni).asTuple()
+                    .map(tuple -> new SavedContext(dbContext.module, tuple.getItem1(), tuple.getItem2()));
+            })
             .onItem().transformToMulti(savedContext -> {
                 // Emit to OpenSearch (fire and forget)
                 openSearchProducer.emitModuleRegistered(
@@ -177,16 +216,16 @@ public class ModuleRegistrationHandler {
                     port,
                     version,
                     savedContext.module.configSchemaId,
-                    savedContext.schemaResult != null ? savedContext.schemaResult.getArtifactId() : null
+                    savedContext.configSchemaResult != null ? savedContext.configSchemaResult.getArtifactId() : null
                 );
 
                 return Multi.createFrom().items(
                     createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_METADATA_RETRIEVED, "Module metadata retrieved", null),
                     createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Schema validated or synthesized", null),
                     createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_DATABASE_SAVED, "Module registration saved to database", savedContext.module.serviceId),
-                    (savedContext.schemaResult != null
-                        ? createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED, "Schema registered in Apicurio", null)
-                        : createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Apicurio registry sync skipped (failure)", null)
+                    (savedContext.configSchemaResult != null
+                        ? createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED, "Config schema registered in Apicurio", null)
+                        : createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Apicurio config schema sync skipped (failure)", null)
                     ),
                     createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED, "Module registration completed successfully", savedContext.module.serviceId)
                 );
@@ -208,11 +247,15 @@ public class ModuleRegistrationHandler {
 
     private static class SavedContext {
         final ServiceModule module;
-        final ApicurioRegistryClient.SchemaRegistrationResponse schemaResult;
+        final ApicurioRegistryClient.SchemaRegistrationResponse configSchemaResult;
+        final ApicurioRegistryClient.SchemaRegistrationResponse apiSchemaResult;
 
-        SavedContext(ServiceModule module, ApicurioRegistryClient.SchemaRegistrationResponse schemaResult) {
+        SavedContext(ServiceModule module,
+                    ApicurioRegistryClient.SchemaRegistrationResponse configSchemaResult,
+                    ApicurioRegistryClient.SchemaRegistrationResponse apiSchemaResult) {
             this.module = module;
-            this.schemaResult = schemaResult;
+            this.configSchemaResult = configSchemaResult;
+            this.apiSchemaResult = apiSchemaResult;
         }
     }
 
@@ -293,6 +336,33 @@ public class ModuleRegistrationHandler {
         if (!metadata.getDependenciesList().isEmpty()) map.put("dependencies", metadata.getDependenciesList());
 
         return map;
+    }
+
+    /**
+     * Fetch the OpenAPI spec from the module's /q/openapi endpoint.
+     * Returns empty if the endpoint doesn't exist or fails.
+     */
+    private Uni<String> fetchOpenApiSpec(String host, int port) {
+        return Uni.createFrom().completionStage(() ->
+            webClient.get(port, host, "/q/openapi")
+                    .timeout(5000)
+                    .send()
+                    .toCompletionStage()
+        ).map(response -> {
+            if (response.statusCode() == 200) {
+                String spec = response.bodyAsString();
+                LOG.debugf("Fetched OpenAPI spec from %s:%d (%d bytes)", host, (Object) port, spec.length());
+                return spec;
+            } else {
+                LOG.debugf("OpenAPI endpoint returned %d for %s:%d, skipping API schema registration",
+                        (Object) response.statusCode(), host, port);
+                return null;
+            }
+        }).onFailure().recoverWithItem(err -> {
+            LOG.debugf("OpenAPI endpoint not available at %s:%d, skipping API schema registration: %s",
+                    host, port, err.getMessage());
+            return null;
+        });
     }
 
     private boolean validateModuleRequest(RegisterRequest request) {

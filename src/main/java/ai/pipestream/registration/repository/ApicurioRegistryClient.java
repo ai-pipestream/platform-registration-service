@@ -127,21 +127,15 @@ public class ApicurioRegistryClient {
 
                 return response;
             } catch (Exception e) {
-                // Try to log more details for Apicurio RuleViolation problem details
-                try {
-                    Class<?> apiExClass = Class.forName("com.microsoft.kiota.ApiException");
-                    if (apiExClass.isInstance(e)) {
-                        LOG.errorf(e, "Apicurio rejected schema for artifactId=%s version=%s", artifactId, version);
-                    } else if (e.getCause() != null && apiExClass.isInstance(e.getCause())) {
-                        LOG.errorf(e, "Apicurio rejected schema for artifactId=%s version=%s", artifactId, version);
-                    } else {
-                        LOG.errorf(e, "Failed to register schema for artifactId=%s version=%s", artifactId, version);
-                    }
-                } catch (ClassNotFoundException cnf) {
-                    LOG.errorf(e, "Failed to register schema for artifactId=%s version=%s", artifactId, version);
-                }
+                // Extract detailed error information from Apicurio exceptions
+                String errorDetails = extractApicurioErrorDetails(e);
+
+                LOG.errorf(e, "Apicurio schema registration failed for artifactId=%s version=%s: %s",
+                        artifactId, version, errorDetails);
+
                 throw new ApicurioRegistryException(
-                    String.format("Failed to register schema for artifactId=%s version=%s", artifactId, version),
+                    String.format("Failed to register schema for artifactId=%s version=%s: %s",
+                            artifactId, version, errorDetails),
                     null, // serviceName not available in this context
                     artifactId,
                     e
@@ -316,6 +310,55 @@ public class ApicurioRegistryClient {
 
             return future;
         });
+    }
+
+    /**
+     * Extract detailed error information from Apicurio exceptions.
+     */
+    private String extractApicurioErrorDetails(Exception e) {
+        try {
+            // Check for RuleViolationProblemDetails
+            if (e.getClass().getSimpleName().contains("RuleViolation")) {
+                try {
+                    var detailMethod = e.getClass().getMethod("getDetail");
+                    var titleMethod = e.getClass().getMethod("getTitle");
+                    var causeListMethod = e.getClass().getMethod("getCauses");
+
+                    String detail = (String) detailMethod.invoke(e);
+                    String title = (String) titleMethod.invoke(e);
+                    @SuppressWarnings("unchecked")
+                    var causes = (java.util.List<Object>) causeListMethod.invoke(e);
+
+                    StringBuilder sb = new StringBuilder();
+                    if (title != null) sb.append(title).append(": ");
+                    if (detail != null) sb.append(detail);
+                    if (causes != null && !causes.isEmpty()) {
+                        sb.append(" (Causes: ");
+                        for (int i = 0; i < causes.size(); i++) {
+                            if (i > 0) sb.append(", ");
+                            sb.append(causes.get(i).toString());
+                        }
+                        sb.append(")");
+                    }
+                    return sb.toString();
+                } catch (Exception ignored) {
+                    // Fall through to generic handling
+                }
+            }
+
+            // Check for ApiException with response body
+            Throwable current = e;
+            while (current != null) {
+                if (current.getClass().getSimpleName().contains("ApiException")) {
+                    return "API error: " + current.getMessage();
+                }
+                current = current.getCause();
+            }
+
+            return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        } catch (Exception ex) {
+            return "Unable to extract error details: " + e.getClass().getSimpleName();
+        }
     }
 
     public static class SchemaRegistrationResponse {

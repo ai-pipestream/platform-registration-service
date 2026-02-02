@@ -19,6 +19,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -103,7 +107,7 @@ public class SelfRegistrationService {
     @ConfigProperty(name = "pipestream.registration.http.tls-enabled", defaultValue = "false")
     boolean httpTlsEnabled;
 
-    @ConfigProperty(name = "quarkus.http.port", defaultValue = "8080")
+    @ConfigProperty(name = "quarkus.http.port", defaultValue = "38101")
     int httpPort;
 
     @ConfigProperty(name = "quarkus.http.root-path", defaultValue = "")
@@ -121,6 +125,18 @@ public class SelfRegistrationService {
      * Auto-register on startup if enabled
      */
     void onStart(@Observes StartupEvent ev) {
+        // #region agent log
+        try {
+            String ndjson = String.format(
+                    "{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"port-config\",\"location\":\"SelfRegistrationService.onStart\",\"message\":\"StartupEvent: profile and http port\",\"data\":{\"profile\":\"%s\",\"httpPort\":%d},\"timestamp\":%d}%n",
+                    profile != null ? profile : "null", httpPort, System.currentTimeMillis());
+            Path logPath = Path.of("/work/core-services/connector-admin/.cursor/debug.log");
+            Files.write(logPath, ndjson.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (Throwable t) {
+            LOG.debugf("Debug log write skipped: %s", t.getMessage());
+        }
+        // #endregion
+
         if (!registrationEnabled) {
             LOG.info("Service registration disabled");
             return;
