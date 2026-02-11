@@ -57,7 +57,6 @@ dependencies {
     implementation 'io.quarkus:quarkus-jdbc-postgresql'
     implementation 'io.quarkus:quarkus-flyway'
     implementation 'org.flywaydb:flyway-database-postgresql'
-    implementation 'io.quarkus:quarkus-smallrye-health'
     implementation 'io.quarkus:quarkus-messaging-kafka'
 
     // Quarkus Dynamic gRPC Extension (replaces local dynamic-grpc client implementation)
