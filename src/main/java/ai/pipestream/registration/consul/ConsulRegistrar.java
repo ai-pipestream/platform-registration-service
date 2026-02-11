@@ -120,7 +120,10 @@ public class ConsulRegistrar {
             // Find the first endpoint with a health path
             for (var endpoint : request.getHttpEndpointsList()) {
                 if (!endpoint.getHealthPath().isBlank()) {
-                    String scheme = endpoint.getScheme().isBlank() ? "http" : endpoint.getScheme();
+                    // Default scheme to https if tls_enabled is true, otherwise http
+                    String defaultScheme = endpoint.getTlsEnabled() ? "https" : "http";
+                    String scheme = endpoint.getScheme().isBlank() ? defaultScheme : endpoint.getScheme();
+                    
                     // Use the endpoint's host/port if specified, otherwise fall back to the main registration host/port
                     // BUT: For the check to work from Consul, it must be reachable.
                     // If the endpoint specifies "localhost" but we are in Docker, we might need the consulHost.
@@ -144,7 +147,13 @@ public class ConsulRegistrar {
                             .setInterval("10s")
                             .setDeregisterAfter("1m")
                             .setHttp(checkUrl);
-                    LOG.infof("Configuring HTTP health check for %s: %s", serviceId, checkUrl);
+                    
+                    if (endpoint.getTlsEnabled()) {
+                        httpCheck.setTlsSkipVerify(true);
+                    }
+                    
+                    LOG.infof("Configuring HTTP health check for %s: %s (tlsSkipVerify=%b)", 
+                        serviceId, checkUrl, endpoint.getTlsEnabled());
                     break;
                 }
             }

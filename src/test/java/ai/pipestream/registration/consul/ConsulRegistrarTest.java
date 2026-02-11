@@ -161,4 +161,43 @@ class ConsulRegistrarTest {
         assertNotNull(checkOptions.getHttp(), "Should have HTTP check configured");
         assertEquals(healthUrl, checkOptions.getHttp());
     }
+
+    @Test
+    void registerService_shouldUseHttpsAndSkipVerify_whenTlsIsEnabledForHttpEndpoint() {
+        String serviceName = "my-ssl-service";
+        String host = "10.0.0.1";
+        int port = 443;
+        String serviceId = ConsulRegistrar.generateServiceId(serviceName, host, port);
+        String healthPath = "/q/health";
+
+        RegisterRequest request = RegisterRequest.newBuilder()
+                .setName(serviceName)
+                .setType(ServiceType.SERVICE_TYPE_SERVICE)
+                .setVersion("1.0.0")
+                .setConnectivity(Connectivity.newBuilder()
+                        .setAdvertisedHost(host)
+                        .setAdvertisedPort(port)
+                        .build())
+                .addHttpEndpoints(HttpEndpoint.newBuilder()
+                        .setTlsEnabled(true) // TLS Enabled
+                        .setHost(host)
+                        .setPort(port)
+                        .setHealthPath(healthPath)
+                        .build())
+                .build();
+
+        when(consulClient.registerService(any(ServiceOptions.class)))
+                .thenReturn(Uni.createFrom().voidItem());
+
+        consulRegistrar.registerService(request, serviceId).await().indefinitely();
+
+        ArgumentCaptor<ServiceOptions> optionsCaptor = ArgumentCaptor.forClass(ServiceOptions.class);
+        verify(consulClient).registerService(optionsCaptor.capture());
+
+        CheckOptions checkOptions = optionsCaptor.getValue().getCheckOptions();
+        assertNotNull(checkOptions.getHttp(), "Should have HTTP check configured");
+        assertTrue(checkOptions.getHttp().startsWith("https://"), "Should use https scheme");
+        assertEquals("https://" + host + ":" + port + healthPath, checkOptions.getHttp());
+        assertTrue(checkOptions.isTlsSkipVerify(), "Should have tlsSkipVerify enabled");
+    }
 }
