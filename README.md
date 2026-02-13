@@ -476,6 +476,45 @@ quarkus.hibernate-orm.schema-management.strategy=none
 quarkus.flyway.migrate-at-start=true
 ```
 
+**Consul Configuration** (`pipestream.consul.*`):
+```properties
+# Consul connection
+pipestream.consul.host=${CONSUL_HOST:localhost}
+pipestream.consul.port=${CONSUL_PORT:8500}
+
+# ACL token (falls back to CONSUL_HTTP_TOKEN env var)
+pipestream.consul.token=${CONSUL_HTTP_TOKEN:}
+
+# Datacenter (optional, defaults to agent's datacenter)
+pipestream.consul.dc=dc1
+
+# TLS configuration
+pipestream.consul.ssl=false
+pipestream.consul.trust-all=false
+pipestream.consul.verify-host=true
+
+# Timeouts (milliseconds, 0 = no timeout)
+pipestream.consul.connect-timeout=5000
+pipestream.consul.idle-timeout=0
+pipestream.consul.timeout=0
+```
+
+**Dynamic gRPC Consul Configuration** (`quarkus.dynamic-grpc.consul.*`):
+```properties
+quarkus.dynamic-grpc.consul.host=${CONSUL_HOST:localhost}
+quarkus.dynamic-grpc.consul.port=${CONSUL_PORT:8500}
+quarkus.dynamic-grpc.consul.token=${CONSUL_HTTP_TOKEN:}
+quarkus.dynamic-grpc.consul.dc=dc1
+quarkus.dynamic-grpc.consul.ssl=false
+quarkus.dynamic-grpc.consul.trust-all=false
+quarkus.dynamic-grpc.consul.verify-host=true
+quarkus.dynamic-grpc.consul.connect-timeout=5000
+quarkus.dynamic-grpc.consul.idle-timeout=0
+quarkus.dynamic-grpc.consul.timeout=0
+quarkus.dynamic-grpc.consul.refresh-period=10s
+quarkus.dynamic-grpc.consul.use-health-checks=false
+```
+
 ## Troubleshooting
 
 If you encounter issues during registration or discovery, check the following areas.
