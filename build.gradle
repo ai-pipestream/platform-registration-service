@@ -33,9 +33,9 @@ pipestreamProtos {
 
     modules {
         // Just register module names - workspace mode handles dependencies automatically
+        // Note: "registration" proto module is provided by pipestream-service-registration extension
         register("common")
         register("pipeline-module")
-        register("registration")
     }
 }
 
@@ -63,6 +63,10 @@ dependencies {
     // Quarkus auto-resolves deployment module via extension metadata
     // Version managed by pipestream-bom
     implementation 'ai.pipestream:quarkus-dynamic-grpc'
+
+    // Pipestream service registration extension (provides ConsulRegistrar, ConsulHealthChecker, ConsulClient producer)
+    // Quarkus auto-resolves the deployment module via extension metadata
+    implementation 'ai.pipestream:pipestream-service-registration'
 
     // Consul integration
     // Note: stork-service-discovery-consul is provided by the extension, but we may still need

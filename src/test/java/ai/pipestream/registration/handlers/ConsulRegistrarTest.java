@@ -1,9 +1,10 @@
-package ai.pipestream.registration.consul;
+package ai.pipestream.registration.handlers;
 
 import ai.pipestream.platform.registration.v1.Connectivity;
 import ai.pipestream.platform.registration.v1.HttpEndpoint;
 import ai.pipestream.platform.registration.v1.RegisterRequest;
 import ai.pipestream.platform.registration.v1.ServiceType;
+import ai.pipestream.registration.consul.ConsulRegistrar;
 import io.smallrye.mutiny.Uni;
 import io.vertx.ext.consul.CheckOptions;
 import io.vertx.ext.consul.ServiceOptions;
@@ -14,8 +15,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,8 +31,7 @@ class ConsulRegistrarTest {
 
     @BeforeEach
     void setup() {
-        consulRegistrar = new ConsulRegistrar();
-        consulRegistrar.consulClient = consulClient;
+        consulRegistrar = new ConsulRegistrar(consulClient);
     }
 
     @Test
@@ -77,10 +75,7 @@ class ConsulRegistrarTest {
         CheckOptions checkOptions = options.getCheckOptions();
 
         assertNotNull(checkOptions, "Check options should not be null");
-        
-        // THIS IS THE BUG REPRODUCTION ASSERTION
-        // Current implementation uses setGrpc, so getHttp() will be null, and getGrpc() will be set.
-        // We want the opposite.
+
         assertNull(checkOptions.getGrpc(), "Should NOT have gRPC check configured for HTTP service");
         assertNotNull(checkOptions.getHttp(), "Should have HTTP check configured");
         assertEquals("http://" + host + ":" + port + basePath + healthPath, checkOptions.getHttp());
