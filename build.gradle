@@ -228,6 +228,7 @@ publishing {
     }
 
     repositories {
+        mavenLocal()
         // Publish to Maven Local for development
         mavenLocal()
 

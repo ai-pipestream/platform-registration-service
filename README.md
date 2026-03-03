@@ -157,14 +157,14 @@ You can let Quarkus build the image or build it manually with Docker.
   -Dquarkus.container-image.name=platform-registration-service \
   -Dquarkus.container-image.tag=local
 
-docker run -p 38101:8080 ghcr.io/ai-pipestream/platform-registration-service:local
+docker run -p 18101:8080 ghcr.io/ai-pipestream/platform-registration-service:local
 ```
 
 **Manual docker build**
 ```bash
 ./gradlew clean quarkusBuild -x test
 docker build -f src/main/docker/Dockerfile.jvm -t platform-registration-service:local .
-docker run -p 38101:8080 platform-registration-service:local
+docker run -p 18101:8080 platform-registration-service:local
 ```
 
 ### Troubleshooting
@@ -303,8 +303,8 @@ docker compose down -v
 ```
 
 **Port Mapping**:
-- External: `38201` (avoids conflict with Quarkus dev mode on 38101)
-- Internal: `38101`
+- External: `38201` (avoids conflict with Quarkus dev mode on 18101)
+- Internal: `18101`
 - Context path: `/platform-registration`
 
 **Note**: For local development, use Quarkus Dev Services which automatically manages infrastructure.
@@ -467,7 +467,7 @@ console.log('Metadata:', latestResponse.metadata);
 ```properties
 # Service Configuration
 quarkus.application.name=platform-registration-service
-quarkus.http.port=38101
+quarkus.http.port=18101
 quarkus.grpc.server.use-separate-server=false
 
 # Database

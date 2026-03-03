@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Platform Registration Service Startup Script
-# Port: 38101 (Core Service)
+# Port: 18101 (Core Service)
 # This script helps start the platform registration service in development mode
 # with proper environment variable detection and instance management.
 
@@ -66,7 +66,7 @@ fi
 
 # Service configuration
 SERVICE_NAME="Platform Registration Service"
-SERVICE_PORT="38101"
+SERVICE_PORT="18101"
 DESCRIPTION="Module registry & health management"
 
 # Check dependencies

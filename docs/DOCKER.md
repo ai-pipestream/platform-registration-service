@@ -56,7 +56,7 @@ Quarkus provides multiple Dockerfiles in `src/main/docker/`:
 
 ```bash
 docker pull ghcr.io/ai-pipestream/platform-registration-service:latest
-docker run -p 38101:8080 \
+docker run -p 18101:8080 \
   -e CONSUL_HOST=consul \
   -e CONSUL_PORT=8500 \
   -e QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://postgres:5432/platform_registration \

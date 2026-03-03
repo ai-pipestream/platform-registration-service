@@ -82,8 +82,9 @@ public class ModuleRegistrationHandler {
 
         // Start with validation as a Uni
         return Uni.createFrom().item(Unchecked.supplier(() -> {
-            if (!validateModuleRequest(request)) {
-                throw new IllegalArgumentException("Invalid module registration request: Missing required fields");
+            ValidationResult validation = RegisterRequestValidator.validateModuleRequest(request);
+            if (!validation.valid()) {
+                throw new IllegalArgumentException("Invalid module registration request: " + validation.reasonsAsString());
             }
             return request;
         }))
@@ -363,17 +364,6 @@ public class ModuleRegistrationHandler {
                     host, port, err.getMessage());
             return null;
         });
-    }
-
-    private boolean validateModuleRequest(RegisterRequest request) {
-        if (request.getName().isEmpty()) {
-            return false;
-        }
-        if (!request.hasConnectivity()) {
-            return false;
-        }
-        Connectivity conn = request.getConnectivity();
-        return !conn.getAdvertisedHost().isEmpty() && conn.getAdvertisedPort() > 0;
     }
 
     private RegistrationEvent createEvent(PlatformEventType type, String message, String serviceId) {

@@ -49,8 +49,9 @@ public class ServiceRegistrationHandler {
             emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting service registration", serviceId));
 
             // Validate request
-            if (!validateServiceRequest(request)) {
-                RegistrationEvent failed = createEventWithError(serviceId, "Invalid service registration request", "Missing required fields");
+            ValidationResult validation = RegisterRequestValidator.validateServiceRequest(request);
+            if (!validation.valid()) {
+                RegistrationEvent failed = createEventWithError(serviceId, "Invalid service registration request", validation.reasonsAsString());
                 emitter.emit(failed);
                 emitter.complete();
                 return;
@@ -160,17 +161,6 @@ public class ServiceRegistrationHandler {
 
                 return response.build();
             });
-    }
-
-    private boolean validateServiceRequest(RegisterRequest request) {
-        if (request.getName().isEmpty()) {
-            return false;
-        }
-        if (!request.hasConnectivity()) {
-            return false;
-        }
-        Connectivity conn = request.getConnectivity();
-        return !conn.getAdvertisedHost().isEmpty() && conn.getAdvertisedPort() > 0;
     }
 
     private RegistrationEvent createEvent(PlatformEventType type, String message, String serviceId) {
