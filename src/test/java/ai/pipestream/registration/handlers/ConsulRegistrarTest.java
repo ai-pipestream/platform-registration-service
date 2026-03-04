@@ -78,7 +78,7 @@ class ConsulRegistrarTest {
 
         assertNull(checkOptions.getGrpc(), "Should NOT have gRPC check configured for HTTP service");
         assertNotNull(checkOptions.getHttp(), "Should have HTTP check configured");
-        assertEquals("http://" + host + ":" + port + basePath + healthPath, checkOptions.getHttp());
+        assertEquals("http://" + host + ":" + port + healthPath, checkOptions.getHttp());
     }
 
     @Test
