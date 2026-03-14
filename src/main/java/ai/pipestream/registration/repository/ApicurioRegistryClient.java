@@ -127,8 +127,14 @@ public class ApicurioRegistryClient {
 
                 return response;
             } catch (Exception e) {
-                // Extract detailed error information from Apicurio exceptions
                 String errorDetails = extractApicurioErrorDetails(e);
+
+                // Version already exists is not an error — it means a prior registration succeeded
+                if (errorDetails.contains("VersionAlreadyExists") || errorDetails.contains("already exists")) {
+                    LOG.infof("Schema already registered for artifactId=%s version=%s, reusing existing registration",
+                            artifactId, version);
+                    return new SchemaRegistrationResponse(artifactId, null, version);
+                }
 
                 LOG.errorf(e, "Apicurio schema registration failed for artifactId=%s version=%s: %s",
                         artifactId, version, errorDetails);

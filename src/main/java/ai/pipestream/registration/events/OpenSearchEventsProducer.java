@@ -97,16 +97,20 @@ public class OpenSearchEventsProducer {
      */
     public void emitModuleRegistered(String serviceId, String moduleName, String host, int port, String version, String schemaId, String apicurioArtifactId) {
         try {
-            ModuleRegistered event = ModuleRegistered.newBuilder()
+            ModuleRegistered.Builder builder = ModuleRegistered.newBuilder()
                 .setServiceId(serviceId)
                 .setModuleName(moduleName)
                 .setHost(host)
                 .setPort(port)
                 .setVersion(version)
-                .setSchemaId(schemaId)
-                .setApicurioArtifactId(apicurioArtifactId)
-                .setTimestamp(createTimestamp())
-                .build();
+                .setTimestamp(createTimestamp());
+            if (schemaId != null) {
+                builder.setSchemaId(schemaId);
+            }
+            if (apicurioArtifactId != null) {
+                builder.setApicurioArtifactId(apicurioArtifactId);
+            }
+            ModuleRegistered event = builder.build();
 
             moduleRegisteredEmitter.send(event);
             LOG.debugf("Emitted ModuleRegistered event for OpenSearch: serviceId=%s", serviceId);
