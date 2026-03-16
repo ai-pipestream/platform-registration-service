@@ -23,32 +23,31 @@ class ApicurioRegistryClientTest {
     }
 
     @Test
-    void versionedArtifactId_createsExpectedFormat() {
-        // Test the private helper method via public API
+    void versionedArtifactId_createsStableFormat() {
         String result = client.testVersionedArtifactId("test-service", "1.2.3");
-        assertThat("Artifact ID should follow expected format",
-            result, is(equalTo("test-service-config-v1_2_3")));
+        assertThat("Artifact ID should be stable (version not embedded)",
+            result, is(equalTo("test-service-config")));
     }
 
     @Test
     void versionedArtifactId_handlesNullVersion() {
         String result = client.testVersionedArtifactId("test-service", null);
-        assertThat("Null version should default to v1",
-            result, is(equalTo("test-service-config-v1")));
+        assertThat("Null version should still produce stable artifact ID",
+            result, is(equalTo("test-service-config")));
     }
 
     @Test
     void versionedArtifactId_handlesBlankVersion() {
         String result = client.testVersionedArtifactId("test-service", "");
-        assertThat("Blank version should default to v1",
-            result, is(equalTo("test-service-config-v1")));
+        assertThat("Blank version should still produce stable artifact ID",
+            result, is(equalTo("test-service-config")));
     }
 
     @Test
-    void versionedArtifactId_convertsDotsToUnderscores() {
+    void versionedArtifactId_ignoresVersionInArtifactId() {
         String result = client.testVersionedArtifactId("test-service", "1.0.0-beta.1");
-        assertThat("Version dots should be converted to underscores",
-            result, is(equalTo("test-service-config-v1_0_0-beta_1")));
+        assertThat("Version should not be embedded in artifact ID",
+            result, is(equalTo("test-service-config")));
     }
 
     @Test
@@ -68,7 +67,7 @@ class ApicurioRegistryClientTest {
         assertThat("Should have called createOrUpdateSchemaWithArtifactId",
             client.getLastCalledMethod(), is(equalTo("createOrUpdateSchemaWithArtifactId")));
         assertThat("Should have built correct artifact ID",
-            client.getLastArtifactId(), is(equalTo("test-service-config-v1_0_0")));
+            client.getLastArtifactId(), is(equalTo("test-service-config")));
     }
 
     @Test
@@ -87,7 +86,7 @@ class ApicurioRegistryClientTest {
         assertThat("Should have called createOrUpdateSchemaWithArtifactId",
             client.getLastCalledMethod(), is(equalTo("createOrUpdateSchemaWithArtifactId")));
         assertThat("Should have built correct artifact ID",
-            client.getLastArtifactId(), is(equalTo("custom-service-config-v2_0_0")));
+            client.getLastArtifactId(), is(equalTo("custom-service-config")));
     }
 
     @Test
@@ -133,9 +132,7 @@ class ApicurioRegistryClientTest {
 
         // Expose the private versionedArtifactId method for testing
         public String testVersionedArtifactId(String baseName, String version) {
-            // Inline the logic since method is private
-            String safeVersion = (version == null || version.isBlank()) ? "v1" : ("v" + version.replace('.', '_'));
-            return baseName + "-config-" + safeVersion;
+            return baseName + "-config";
         }
 
         public String getLastCalledMethod() { return lastCalledMethod; }

@@ -46,7 +46,7 @@ class ApicurioRegistryClientHttpIntegrationTest {
         assertThat("Registration should have global ID",
             registrationResponse.getGlobalId(), is(notNullValue()));
         assertThat("Artifact ID should contain expected base",
-            registrationResponse.getArtifactId(), is(equalTo(artifactBase + "-config-v1_0_0")));
+            registrationResponse.getArtifactId(), is(equalTo(artifactBase + "-config")));
 
         // Verify we can retrieve the schema using the artifact base (service name)
         String retrievedSchema = apicurioClient.getSchema(artifactBase, version)

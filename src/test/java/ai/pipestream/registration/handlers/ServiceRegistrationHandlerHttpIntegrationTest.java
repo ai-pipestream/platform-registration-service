@@ -116,7 +116,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
             is(equalTo(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED)));
 
         // Verify the HTTP schema was registered in Apicurio
-        String expectedArtifactId = serviceName + "-http-config-v1_0_0";
+        String expectedArtifactId = serviceName + "-http-config";
         String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version)
             .await().atMost(Duration.ofSeconds(10));
 
@@ -165,7 +165,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
             is(equalTo(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED)));
 
         // Verify the HTTP schema was registered with default artifact ID
-        String expectedArtifactId = serviceName + "-http-config-v2_0_0";
+        String expectedArtifactId = serviceName + "-http-config";
         String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version)
             .await().atMost(Duration.ofSeconds(10));
 
@@ -212,7 +212,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
         assertThat("Registration should succeed", registrationResult, is(notNullValue()));
 
         // Verify schema registered with service version
-        String expectedArtifactId = serviceName + "-openapi-config-v3_1_0";
+        String expectedArtifactId = serviceName + "-openapi-config";
         String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, serviceVersion)
             .await().atMost(Duration.ofSeconds(10));
 

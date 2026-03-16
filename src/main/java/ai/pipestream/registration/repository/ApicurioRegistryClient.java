@@ -281,8 +281,9 @@ public class ApicurioRegistryClient {
     }
 
     private String versionedArtifactId(String baseName, String version) {
-        String safeVersion = (version == null || version.isBlank()) ? "v1" : ("v" + version.replace('.', '_'));
-        return baseName + "-config-" + safeVersion;
+        // Artifact ID is stable by module name — version is tracked via Apicurio's version metadata,
+        // not embedded in the artifact ID. FIND_OR_CREATE_VERSION handles deduplication.
+        return baseName + "-config";
     }
 
     /**
