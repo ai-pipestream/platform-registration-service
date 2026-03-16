@@ -145,7 +145,8 @@ public class ModuleRegistrationHandler {
         String host = connectivity.getAdvertisedHost();
         int port = connectivity.getAdvertisedPort();
         String moduleName = request.getName();
-        String version = request.getVersion();
+        String version = RegistrationVersionSanitizer.sanitize(
+                request.getVersion(), moduleName, LOG, "register_request.version");
 
         return fetchModuleMetadata(request)
             .chain(metadata -> {
@@ -177,10 +178,10 @@ public class ModuleRegistrationHandler {
             .chain(dbContext -> {
                 // Register config schema
                 Uni<ApicurioRegistryClient.SchemaRegistrationResponse> configSchemaUni =
-                    apicurioClient.createOrUpdateSchema(moduleName, request.getVersion(), dbContext.schema)
+                    apicurioClient.createOrUpdateSchema(moduleName, version, dbContext.schema)
                         .onFailure().recoverWithItem(err -> {
                             LOG.warnf(err, "Apicurio config schema registration failed for %s:%s, continuing without registry sync",
-                                    moduleName, request.getVersion());
+                                    moduleName, version);
                             return null;
                         });
 
@@ -189,17 +190,17 @@ public class ModuleRegistrationHandler {
                     fetchOpenApiSpec(host, port)
                         .chain(openApiSpec -> {
                             if (openApiSpec != null && !openApiSpec.isBlank()) {
-                                LOG.infof("Registering OpenAPI spec for %s:%s to Apicurio", moduleName, request.getVersion());
+                                LOG.infof("Registering OpenAPI spec for %s:%s to Apicurio", moduleName, version);
                                 return apicurioClient.createOrUpdateSchemaWithArtifactBase(
-                                        moduleName + "-api", request.getVersion(), openApiSpec)
+                                        moduleName + "-api", version, openApiSpec)
                                     .onFailure().recoverWithItem(err -> {
                                         LOG.warnf(err, "Apicurio API schema registration failed for %s:%s, continuing without registry sync",
-                                                moduleName, request.getVersion());
+                                                moduleName, version);
                                         return null;
                                     });
                             } else {
                                 LOG.debugf("No OpenAPI spec available for %s:%s, skipping API schema registration",
-                                        moduleName, request.getVersion());
+                                        moduleName, version);
                                 return Uni.createFrom().nullItem();
                             }
                         });

@@ -42,6 +42,8 @@ public class ServiceRegistrationHandler {
         Connectivity connectivity = request.getConnectivity();
         String host = connectivity.getAdvertisedHost();
         int port = connectivity.getAdvertisedPort();
+        String sanitizedVersion = RegistrationVersionSanitizer.sanitize(
+            request.getVersion(), request.getName(), LOG, "register_request.version");
         String serviceId = ConsulRegistrar.generateServiceId(request.getName(), host, port);
 
         return Multi.createFrom().emitter(emitter -> {
@@ -97,8 +99,9 @@ public class ServiceRegistrationHandler {
                             Uni<Void> schemaRegistration = Uni.createFrom().voidItem();
                             if (request.hasHttpSchema()) {
                                 String schemaVersion = request.hasHttpSchemaVersion() && !request.getHttpSchemaVersion().isBlank()
-                                    ? request.getHttpSchemaVersion()
-                                    : request.getVersion();
+                                    ? RegistrationVersionSanitizer.sanitize(
+                                        request.getHttpSchemaVersion(), request.getName(), LOG, "register_request.http_schema_version")
+                                    : sanitizedVersion;
                                 String artifactBase = request.hasHttpSchemaArtifactId() && !request.getHttpSchemaArtifactId().isBlank()
                                     ? request.getHttpSchemaArtifactId()
                                     : request.getName() + "-http";
@@ -122,7 +125,7 @@ public class ServiceRegistrationHandler {
 
                                 // Emit to OpenSearch on success
                                 openSearchProducer.emitServiceRegistered(serviceId, request.getName(),
-                                    host, port, request.getVersion());
+                                    host, port, sanitizedVersion);
                                 emitter.complete();
                             });
                         });
