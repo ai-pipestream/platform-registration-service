@@ -119,6 +119,7 @@ test {
 compileJava {
     options.encoding = 'UTF-8'
     options.compilerArgs << '-parameters'
+    options.compilerArgs << '-Xlint:deprecation'
 }
 
 compileTestJava {
@@ -214,8 +215,6 @@ publishing {
     }
 
     repositories {
-        mavenLocal()
-        // Publish to Maven Local for development
         mavenLocal()
 
         // Conditionally add GitHub Packages repository when credentials are available
