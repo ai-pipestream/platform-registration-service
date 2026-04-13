@@ -7,7 +7,13 @@ plugins {
     alias(libs.plugins.maven.publish)
     id 'signing'
     alias(libs.plugins.nmcp.single)
-    alias(libs.plugins.proto.toolchain)
+    // Auto-wires quarkus-grpc-gatherer + quarkus-grpc-zero into the Quarkus
+    // code generation pipeline. Configures Quarkus quarkusBuildProperties at
+    // Gradle configuration time to tell grpc-zero where to find the staged
+    // proto tree and to emit a FileDescriptorSet as META-INF/grpc/services.dsc.
+    // Zero additional boilerplate required - no sourceSets addition, no Copy
+    // tasks, no descriptor config in application.properties.
+    id 'ai.pipestream.quarkus-grpc-gatherer' version '0.1.0-SNAPSHOT'
 }
 
 scmVersion {
@@ -21,30 +27,40 @@ scmVersion {
     }
 }
 
-// Proto toolchain configuration - fetches from Git and generates Java/gRPC code
-// Using git-proto-workspace mode to handle cross-module dependencies
-pipestreamProtos {
-    sourceMode = 'git-proto-workspace'
-    gitRepo = "https://github.com/ai-pipestream/pipestream-protos.git"
-    gitRef = "main"
-    generateMutiny = true
-    generateDescriptors = true
-
-    modules {
-        // Just register module names - workspace mode handles dependencies automatically
-        // Note: "registration" proto module is provided by pipestream-service-registration extension
-        register("common")
-        register("pipeline-module")
-    }
-}
+// Proto acquisition + codegen pipeline:
+//   1. quarkus-grpc-gatherer clones ai-pipestream/pipestream-protos at build
+//      time and stages its buf-workspace modules into
+//      build/gathered-protos/proto (see application.properties
+//      quarkus.grpc-gather.buf-workspace-*).
+//   2. The ai.pipestream.quarkus-grpc-gatherer Gradle plugin (applied above)
+//      sets Quarkus quarkusBuildProperties so grpc-zero reads protos from
+//      that directory and writes a FileDescriptorSet to
+//      META-INF/grpc/services.dsc on the runtime classpath.
+//   3. quarkus-grpc-zero runs protoc (WASM) over the staged tree and
+//      generates Java + Mutiny stubs.
+//   4. quarkus-grpc's own codegen is excluded because grpc-zero replaces it;
+//      the runtime (@GrpcService, server binding, client channels) stays.
+//
+// Registration proto classes (ai.pipestream.platform.registration.v1.*)
+// still come prebuilt from the pipestream-service-registration extension jar.
 
 dependencies {
     // Import pipeline BOM to align all managed versions
     // Version defined in gradle.properties as single source of truth
     implementation platform("ai.pipestream:pipestream-bom:${pipestreamBomVersion}")
 
+    // Proto gather + grpc-zero codegen replacing proto-toolchain.
+    // quarkus-grpc-zero is pulled in transitively as an api dependency of
+    // quarkus-grpc-gatherer's runtime POM, so we no longer have to declare
+    // it explicitly here. The gatherer's release pins a known-compatible
+    // grpc-zero version.
+    implementation 'ai.pipestream:quarkus-grpc-gatherer:0.1.0-SNAPSHOT'
+
     // Quarkus dependencies - using TOML catalog for version management
-    implementation libs.quarkus.grpc
+    // Exclude quarkus-grpc-codegen: grpc-zero owns codegen in this project.
+    implementation(libs.quarkus.grpc) {
+        exclude group: 'io.quarkus', module: 'quarkus-grpc-codegen'
+    }
     implementation libs.quarkus.arc
     implementation libs.quarkus.cache
     implementation libs.quarkus.vertx
