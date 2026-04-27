@@ -10,6 +10,7 @@ import io.quarkus.grpc.GrpcService;
 import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
+import ai.pipestream.server.vertx.RunOnVertxContext;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
@@ -18,6 +19,7 @@ import org.jboss.logging.Logger;
  * Updated to use the unified Register/Unregister API from the new proto definition.
  */
 @GrpcService
+@RunOnVertxContext
 public class PlatformRegistrationService extends MutinyPlatformRegistrationServiceGrpc.PlatformRegistrationServiceImplBase {
 
     private static final Logger LOG = Logger.getLogger(PlatformRegistrationService.class);
