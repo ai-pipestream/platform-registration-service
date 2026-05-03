@@ -26,7 +26,7 @@ scmVersion {
 pipestreamProtos {
     sourceMode = 'git-proto-workspace'
     gitRepo = "https://github.com/ai-pipestream/pipestream-protos.git"
-    gitRef = "main"
+    gitRef = "bom/engine-refactor-pr0"
     generateMutiny = true
     generateDescriptors = true
 
