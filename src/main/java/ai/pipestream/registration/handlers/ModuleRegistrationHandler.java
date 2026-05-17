@@ -11,6 +11,7 @@ import ai.pipestream.registration.entity.ServiceModule;
 import ai.pipestream.registration.events.OpenSearchEventsProducer;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
 import ai.pipestream.registration.repository.ModuleRepository;
+import ai.pipestream.registration.topics.ModuleTopicProvisioner;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.unchecked.Unchecked;
@@ -53,6 +54,9 @@ public class ModuleRegistrationHandler {
 
     @Inject
     OpenSearchEventsProducer openSearchProducer;
+
+    @Inject
+    ModuleTopicProvisioner moduleTopicProvisioner;
 
     @Inject
     Vertx vertx;
@@ -205,8 +209,21 @@ public class ModuleRegistrationHandler {
                             }
                         });
 
-                // Register both concurrently and combine results
-                return Uni.combine().all().unis(configSchemaUni, apiSchemaUni).asTuple()
+                // Concurrently ensure the module-work Kafka topic
+                // (pipestream.module.<moduleName>) exists. Idempotent,
+                // single-owner (only platform-reg registers modules).
+                // Failure-isolated: a Kafka hiccup must NOT fail module
+                // registration — same recover pattern as Apicurio above.
+                Uni<Void> topicUni =
+                    moduleTopicProvisioner.ensureModuleTopic(moduleName)
+                        .onFailure().invoke(err -> LOG.warnf(err,
+                            "module-work topic ensure failed for %s, continuing without it",
+                            moduleName))
+                        .onFailure().recoverWithItem(() -> null);
+
+                // Register schemas + ensure topic concurrently; topic
+                // result (Void) is not part of SavedContext.
+                return Uni.combine().all().unis(configSchemaUni, apiSchemaUni, topicUni).asTuple()
                     .map(tuple -> new SavedContext(dbContext.module, tuple.getItem1(), tuple.getItem2()));
             })
             .onItem().transformToMulti(savedContext -> {
