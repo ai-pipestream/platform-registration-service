@@ -53,6 +53,10 @@ public final class RegisterRequestValidator {
             reasons.add("version is required for module registration");
         }
 
+        if (!request.hasModule()) {
+            reasons.add("module inline metadata is required for module registration");
+        }
+
         return reasons.isEmpty() ? ValidationResult.ok() : ValidationResult.failed(reasons);
     }
 
