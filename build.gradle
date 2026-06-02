@@ -7,7 +7,14 @@ plugins {
     alias(libs.plugins.maven.publish)
     id 'signing'
     alias(libs.plugins.nmcp.single)
-    alias(libs.plugins.proto.toolchain)
+}
+
+// Registration + platform gRPC types come from pipestream-service-registration (and its
+// proto-toolchain build). Regenerating registration here duplicates classes and breaks
+// Quarkus dev with NoClassDefFoundError: ServiceType.
+
+quarkus {
+    quarkusBuildProperties.put("quarkus.grpc.codegen.enabled", "false")
 }
 
 scmVersion {
@@ -23,21 +30,6 @@ scmVersion {
 
 // Proto toolchain configuration - fetches from Git and generates Java/gRPC code
 // Using git-proto-workspace mode to handle cross-module dependencies
-pipestreamProtos {
-    sourceMode = 'git-proto-workspace'
-    gitRepo = "https://github.com/ai-pipestream/pipestream-protos.git"
-    gitRef = "main"
-    generateMutiny = true
-    generateDescriptors = true
-
-    modules {
-        // Just register module names - workspace mode handles dependencies automatically
-        // Note: "registration" proto module is provided by pipestream-service-registration extension
-        register("common")
-        register("pipeline-module")
-    }
-}
-
 dependencies {
     // Import pipeline BOM to align all managed versions
     // Version defined in gradle.properties as single source of truth

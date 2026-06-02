@@ -1,6 +1,7 @@
 package ai.pipestream.registration.handlers;
 
 import ai.pipestream.platform.registration.v1.Connectivity;
+import ai.pipestream.platform.registration.v1.ModuleRegistration;
 import ai.pipestream.platform.registration.v1.RegisterRequest;
 import ai.pipestream.platform.registration.v1.ServiceType;
 import org.junit.jupiter.api.Test;
@@ -87,15 +88,31 @@ class RegisterRequestValidatorTest {
 
     // --- validateModuleRequest ---
 
+    private static RegisterRequest.Builder validModuleBuilder() {
+        return validBaseBuilder()
+                .setType(ServiceType.SERVICE_TYPE_MODULE)
+                .setModule(ModuleRegistration.newBuilder()
+                        .setHealthCheckPassed(true)
+                        .build());
+    }
+
     @Test
     void validateModuleRequest_validRequest_returnsOk() {
-        ValidationResult result = RegisterRequestValidator.validateModuleRequest(validBaseBuilder().build());
+        ValidationResult result = RegisterRequestValidator.validateModuleRequest(validModuleBuilder().build());
         assertTrue(result.valid());
     }
 
     @Test
+    void validateModuleRequest_missingInlineModule_returnsReason() {
+        RegisterRequest request = validModuleBuilder().clearModule().build();
+        ValidationResult result = RegisterRequestValidator.validateModuleRequest(request);
+        assertFalse(result.valid());
+        assertTrue(result.reasons().stream().anyMatch(r -> r.contains("module inline metadata")));
+    }
+
+    @Test
     void validateModuleRequest_missingVersion_returnsReason() {
-        RegisterRequest request = validBaseBuilder().clearVersion().build();
+        RegisterRequest request = validModuleBuilder().clearVersion().build();
         ValidationResult result = RegisterRequestValidator.validateModuleRequest(request);
         assertFalse(result.valid());
         assertTrue(result.reasons().stream().anyMatch(r -> r.contains("version")));
@@ -103,7 +120,7 @@ class RegisterRequestValidatorTest {
 
     @Test
     void validateModuleRequest_missingNameAndVersion_collectsBoth() {
-        RegisterRequest request = validBaseBuilder().clearName().clearVersion().build();
+        RegisterRequest request = validModuleBuilder().clearName().clearVersion().build();
         ValidationResult result = RegisterRequestValidator.validateModuleRequest(request);
         assertFalse(result.valid());
         assertTrue(result.reasons().stream().anyMatch(r -> r.contains("name")));

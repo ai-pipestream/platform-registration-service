@@ -1,10 +1,7 @@
 package ai.pipestream.registration.handlers;
 
 import com.google.protobuf.Timestamp;
-import ai.pipestream.data.module.v1.GetServiceRegistrationRequest;
-import ai.pipestream.data.module.v1.GetServiceRegistrationResponse;
 import ai.pipestream.platform.registration.v1.*;
-import ai.pipestream.platform.registration.client.RegistrationGrpcClients;
 import ai.pipestream.registration.consul.ConsulHealthChecker;
 import ai.pipestream.registration.consul.ConsulRegistrar;
 import ai.pipestream.registration.entity.ServiceModule;
@@ -49,9 +46,6 @@ public class ModuleRegistrationHandler {
     ApicurioRegistryClient apicurioClient;
 
     @Inject
-    RegistrationGrpcClients grpcClients;
-
-    @Inject
     OpenSearchEventsProducer openSearchProducer;
 
     @Inject
@@ -69,9 +63,8 @@ public class ModuleRegistrationHandler {
 
     /**
      * Register a module with streaming status updates.
-     * Expects RegisterRequest with type=SERVICE_TYPE_MODULE.
-     * Flow: Validate → Consul → Health → Fetch Metadata → Apicurio → Database → OpenSearch
-     * Returns Multi&lt;RegistrationEvent&gt; which PlatformRegistrationService wraps in RegisterResponse.
+     * Expects RegisterRequest with type=SERVICE_TYPE_MODULE and inline {@code module} metadata.
+     * Flow: Validate → Consul → Health → Apicurio → Database → OpenSearch
      */
     public Multi<RegistrationEvent> registerModule(RegisterRequest request) {
         Connectivity connectivity = request.getConnectivity();
@@ -80,7 +73,6 @@ public class ModuleRegistrationHandler {
         String moduleName = request.getName();
         String serviceId = ConsulRegistrar.generateServiceId(moduleName, host, port);
 
-        // Start with validation as a Uni
         return Uni.createFrom().item(Unchecked.supplier(() -> {
             ValidationResult validation = RegisterRequestValidator.validateModuleRequest(request);
             if (!validation.valid()) {
@@ -88,15 +80,12 @@ public class ModuleRegistrationHandler {
             }
             return request;
         }))
-        .onItem().transformToMulti(validatedRequest -> {
-            // Create a Multi that emits events throughout the registration process
-            return Multi.createBy().concatenating()
+        .onItem().transformToMulti(validatedRequest -> Multi.createBy().concatenating()
                 .streams(
                     Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting module registration", serviceId)),
                     Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Module registration request validated", null)),
                     executeModuleRegistrationAsMulti(validatedRequest, serviceId)
-                );
-        })
+                ))
         .onFailure().recoverWithMulti(error -> {
             LOG.error("Module registration failed", error);
             return Multi.createFrom().items(
@@ -147,36 +136,33 @@ public class ModuleRegistrationHandler {
         String moduleName = request.getName();
         String version = RegistrationVersionSanitizer.sanitize(
                 request.getVersion(), moduleName, LOG, "register_request.version");
+        ModuleRegistration moduleMetadata = request.getModule();
 
-        return fetchModuleMetadata(request)
-            .chain(metadata -> {
-                String schema = extractOrSynthesizeSchema(metadata, moduleName);
-                Map<String, Object> metadataMap = buildMetadataMap(metadata);
+        if (!moduleMetadata.getHealthCheckPassed()) {
+            String detail = moduleMetadata.hasHealthCheckMessage()
+                    ? moduleMetadata.getHealthCheckMessage()
+                    : "Module reported health_check_passed=false";
+            return Multi.createFrom().item(
+                    createEventWithError(serviceId, "Module health check failed", detail));
+        }
 
-                // Create a duplicated (safe) Vert.x context and switch the downstream onto it
-                Context safeCtx = VertxContext.createNewDuplicatedContext();
+        String schema = extractOrSynthesizeSchema(moduleMetadata, moduleName);
+        Map<String, Object> metadataMap = buildMetadataMap(moduleMetadata);
 
-                return Uni.createFrom().item(1)
-                    .emitOn(r -> safeCtx.runOnContext(x -> r.run()))
-                    .invoke(() -> {
-                        Context ctx = Vertx.currentContext();
-                        boolean duplicated = ctx != null && VertxContext.isDuplicatedContext(ctx);
-                        LOG.debugf("DB segment context: present=%s, duplicated=%s, thread=%s",
-                                ctx != null, duplicated, Thread.currentThread().getName());
-                    })
-                    .chain(ignored -> moduleRepository.registerModule(
-                        moduleName,
-                        host,
-                        port,
-                        version,
-                        metadataMap,
-                        schema
-                    ))
-                    .map(savedModule -> new DatabaseSaveContext(savedModule, metadata, schema));
-            })
-            // After database is done, register schemas to Apicurio (config + API spec concurrently)
+        Context safeCtx = VertxContext.createNewDuplicatedContext();
+
+        return Uni.createFrom().item(1)
+            .emitOn(r -> safeCtx.runOnContext(x -> r.run()))
+            .chain(ignored -> moduleRepository.registerModule(
+                    moduleName,
+                    host,
+                    port,
+                    version,
+                    metadataMap,
+                    schema
+            ))
+            .map(savedModule -> new DatabaseSaveContext(savedModule, schema))
             .chain(dbContext -> {
-                // Register config schema
                 Uni<ApicurioRegistryClient.SchemaRegistrationResponse> configSchemaUni =
                     apicurioClient.createOrUpdateSchema(moduleName, version, dbContext.schema)
                         .onFailure().recoverWithItem(err -> {
@@ -185,9 +171,8 @@ public class ModuleRegistrationHandler {
                             return null;
                         });
 
-                // Fetch and register OpenAPI spec (if available)
                 Uni<ApicurioRegistryClient.SchemaRegistrationResponse> apiSchemaUni =
-                    fetchOpenApiSpec(host, port)
+                    fetchOpenApiSpec(host, port, request)
                         .chain(openApiSpec -> {
                             if (openApiSpec != null && !openApiSpec.isBlank()) {
                                 LOG.infof("Registering OpenAPI spec for %s:%s to Apicurio", moduleName, version);
@@ -198,19 +183,16 @@ public class ModuleRegistrationHandler {
                                                 moduleName, version);
                                         return null;
                                     });
-                            } else {
-                                LOG.debugf("No OpenAPI spec available for %s:%s, skipping API schema registration",
-                                        moduleName, version);
-                                return Uni.createFrom().nullItem();
                             }
+                            LOG.debugf("No OpenAPI spec available for %s:%s, skipping API schema registration",
+                                    moduleName, version);
+                            return Uni.createFrom().nullItem();
                         });
 
-                // Register both concurrently and combine results
                 return Uni.combine().all().unis(configSchemaUni, apiSchemaUni).asTuple()
                     .map(tuple -> new SavedContext(dbContext.module, tuple.getItem1(), tuple.getItem2()));
             })
             .onItem().transformToMulti(savedContext -> {
-                // Emit to OpenSearch (fire and forget)
                 openSearchProducer.emitModuleRegistered(
                     savedContext.module.serviceId,
                     moduleName,
@@ -234,15 +216,12 @@ public class ModuleRegistrationHandler {
             });
     }
 
-    // Helper classes to pass context through the chain
     private static class DatabaseSaveContext {
         final ServiceModule module;
-        final GetServiceRegistrationResponse metadata;
         final String schema;
 
-        DatabaseSaveContext(ServiceModule module, GetServiceRegistrationResponse metadata, String schema) {
+        DatabaseSaveContext(ServiceModule module, String schema) {
             this.module = module;
-            this.metadata = metadata;
             this.schema = schema;
         }
     }
@@ -261,10 +240,6 @@ public class ModuleRegistrationHandler {
         }
     }
 
-
-    /**
-     * Unregister a module using the unified UnregisterRequest
-     */
     public Uni<UnregisterResponse> unregisterModule(UnregisterRequest request) {
         String serviceId = ConsulRegistrar.generateServiceId(request.getName(), request.getHost(), request.getPort());
 
@@ -276,7 +251,6 @@ public class ModuleRegistrationHandler {
 
                 if (success) {
                     response.setMessage("Module unregistered successfully");
-                    // Emit to OpenSearch
                     openSearchProducer.emitModuleUnregistered(serviceId, request.getName());
                 } else {
                     response.setMessage("Failed to unregister module");
@@ -284,14 +258,6 @@ public class ModuleRegistrationHandler {
 
                 return response.build();
             });
-    }
-
-    private Uni<GetServiceRegistrationResponse> fetchModuleMetadata(RegisterRequest request) {
-        String moduleName = request.getName();
-        return grpcClients.getPipeStepProcessorClient(moduleName)
-            .onItem().transformToUni(stub ->
-                stub.getServiceRegistration(GetServiceRegistrationRequest.newBuilder().build())
-            );
     }
 
     private Uni<Void> rollbackConsulRegistration(String serviceId) {
@@ -306,12 +272,11 @@ public class ModuleRegistrationHandler {
             .replaceWith(Uni.createFrom().voidItem());
     }
 
-    private String extractOrSynthesizeSchema(GetServiceRegistrationResponse metadata, String moduleName) {
+    private String extractOrSynthesizeSchema(ModuleRegistration metadata, String moduleName) {
         if (metadata.hasJsonConfigSchema() && !metadata.getJsonConfigSchema().isBlank()) {
             return metadata.getJsonConfigSchema();
         }
 
-        // Synthesize a default key-value OpenAPI 3.1 schema
         return "{\n" +
             "  \"openapi\": \"3.1.0\",\n" +
             "  \"info\": { \"title\": \"" + moduleName + " Configuration\", \"version\": \"1.0.0\" },\n" +
@@ -327,42 +292,68 @@ public class ModuleRegistrationHandler {
             "}";
     }
 
-    private Map<String, Object> buildMetadataMap(GetServiceRegistrationResponse metadata) {
-        Map<String, Object> map = new HashMap<>(metadata.getMetadataMap());
+    private Map<String, Object> buildMetadataMap(ModuleRegistration metadata) {
+        Map<String, Object> map = new HashMap<>(metadata.getModuleMetadataMap());
 
         if (metadata.hasDisplayName()) map.put("display_name", metadata.getDisplayName());
         if (metadata.hasDescription()) map.put("description", metadata.getDescription());
         if (metadata.hasOwner()) map.put("owner", metadata.getOwner());
         if (metadata.hasDocumentationUrl()) map.put("documentation_url", metadata.getDocumentationUrl());
-        if (!metadata.getTagsList().isEmpty()) map.put("tags", metadata.getTagsList());
+        if (!metadata.getModuleTagsList().isEmpty()) map.put("tags", metadata.getModuleTagsList());
         if (!metadata.getDependenciesList().isEmpty()) map.put("dependencies", metadata.getDependenciesList());
+        if (metadata.hasExpectedMaxProcessingSeconds()) {
+            map.put("expected_max_processing_seconds", metadata.getExpectedMaxProcessingSeconds());
+        }
+        if (metadata.hasHealthCheckMessage()) {
+            map.put("health_check_message", metadata.getHealthCheckMessage());
+        }
 
         return map;
     }
 
-    /**
-     * Fetch the OpenAPI spec from the module's /q/openapi endpoint.
-     * Returns empty if the endpoint doesn't exist or fails.
-     */
-    private Uni<String> fetchOpenApiSpec(String host, int port) {
+    private Uni<String> fetchOpenApiSpec(String host, int port, RegisterRequest request) {
+        String openApiPath = "/q/openapi";
+        int httpPort = port;
+        String httpHost = host;
+
+        if (!request.getHttpEndpointsList().isEmpty()) {
+            HttpEndpoint endpoint = request.getHttpEndpoints(0);
+            if (!endpoint.getHost().isBlank()) {
+                httpHost = endpoint.getHost();
+            }
+            if (endpoint.getPort() > 0) {
+                httpPort = endpoint.getPort();
+            }
+            if (!endpoint.getBasePath().isBlank() && !"/".equals(endpoint.getBasePath())) {
+                String base = endpoint.getBasePath();
+                if (!base.endsWith("/")) {
+                    base = base + "/";
+                }
+                openApiPath = base + "q/openapi";
+            }
+        }
+
+        final String path = openApiPath;
+        final String resolvedHost = httpHost;
+        final int resolvedPort = httpPort;
+
         return Uni.createFrom().completionStage(() ->
-            webClient.get(port, host, "/q/openapi")
+            webClient.get(resolvedPort, resolvedHost, path)
                     .timeout(5000)
                     .send()
                     .toCompletionStage()
         ).map(response -> {
             if (response.statusCode() == 200) {
                 String spec = response.bodyAsString();
-                LOG.debugf("Fetched OpenAPI spec from %s:%d (%d bytes)", host, (Object) port, spec.length());
+                LOG.debugf("Fetched OpenAPI spec from %s:%d (%d bytes)", resolvedHost, resolvedPort, spec.length());
                 return spec;
-            } else {
-                LOG.debugf("OpenAPI endpoint returned %d for %s:%d, skipping API schema registration",
-                        (Object) response.statusCode(), host, port);
-                return null;
             }
+            LOG.debugf("OpenAPI endpoint returned %d for %s:%d, skipping API schema registration",
+                    (Object) response.statusCode(), resolvedHost, resolvedPort);
+            return null;
         }).onFailure().recoverWithItem(err -> {
             LOG.debugf("OpenAPI endpoint not available at %s:%d, skipping API schema registration: %s",
-                    host, port, err.getMessage());
+                    resolvedHost, resolvedPort, err.getMessage());
             return null;
         });
     }
@@ -384,7 +375,7 @@ public class ModuleRegistrationHandler {
         RegistrationEvent.Builder builder = RegistrationEvent.newBuilder()
             .setEventType(PlatformEventType.PLATFORM_EVENT_TYPE_FAILED)
             .setMessage(message)
-            .setErrorDetail(errorDetail)
+            .setErrorDetail(errorDetail != null ? errorDetail : "")
             .setTimestamp(createTimestamp());
 
         if (serviceId != null) {

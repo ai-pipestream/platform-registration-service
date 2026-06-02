@@ -1,7 +1,5 @@
 package ai.pipestream.registration.handlers;
 
-import ai.pipestream.data.module.v1.PipeStepProcessorServiceGrpc;
-import ai.pipestream.data.module.v1.GetServiceRegistrationResponse;
 import ai.pipestream.platform.registration.v1.GetModuleSchemaRequest;
 import ai.pipestream.platform.registration.v1.GetModuleSchemaResponse;
 import ai.pipestream.registration.entity.ConfigSchema;
