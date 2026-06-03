@@ -5,8 +5,8 @@ import io.apicurio.registry.rest.client.models.*;
 import io.apicurio.registry.types.ArtifactType;
 import io.apicurio.registry.utils.IoUtil;
 import io.kiota.http.vertx.VertXRequestAdapter;
+import io.quarkus.virtual.threads.VirtualThreads;
 import io.smallrye.mutiny.Uni;
-import io.smallrye.mutiny.infrastructure.Infrastructure;
 import io.smallrye.mutiny.unchecked.Unchecked;
 import io.vertx.mutiny.core.Vertx;
 import jakarta.annotation.PostConstruct;
@@ -18,6 +18,7 @@ import org.jboss.logging.Logger;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 /**
  * Client for interacting with Apicurio Registry v3.
@@ -31,6 +32,10 @@ public class ApicurioRegistryClient {
 
     @Inject
     Vertx vertx;
+
+    @Inject
+    @VirtualThreads
+    Executor virtualThreadExecutor;
 
     @ConfigProperty(name = "apicurio.registry.url", defaultValue = "http://localhost:8081")
     String apicurioUrl;
@@ -86,7 +91,7 @@ public class ApicurioRegistryClient {
      */
     public Uni<SchemaRegistrationResponse> createOrUpdateSchemaWithArtifactId(String artifactId, String version, String jsonSchema) {
 
-        // Execute the blocking operation on a worker thread to avoid blocking the event loop
+        // Blocking Apicurio SDK — offload to Quarkus virtual-thread executor (JDK 21+)
         return Uni.createFrom().item(Unchecked.supplier(() -> {
             try {
                 // Create the artifact with the JSON schema
@@ -148,7 +153,7 @@ public class ApicurioRegistryClient {
                 );
             }
         }))
-        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());  // Run on worker thread pool
+        .runSubscriptionOn(virtualThreadExecutor);
     }
 
     /**
@@ -195,7 +200,7 @@ public class ApicurioRegistryClient {
                 );
             }
         }))
-        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool());  // Run on worker thread pool
+        .runSubscriptionOn(virtualThreadExecutor);
     }
 
     /**
@@ -220,7 +225,7 @@ public class ApicurioRegistryClient {
                 return false;
             }
         })
-        .runSubscriptionOn(Infrastructure.getDefaultWorkerPool())  // Run on worker thread pool
+        .runSubscriptionOn(virtualThreadExecutor)
         .onFailure().recoverWithItem(false);
     }
 

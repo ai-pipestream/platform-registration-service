@@ -7,7 +7,6 @@ import ai.pipestream.registration.handlers.ModuleRegistrationHandler;
 import ai.pipestream.registration.handlers.ServiceDiscoveryHandler;
 import ai.pipestream.registration.handlers.SchemaRetrievalHandler;
 import io.quarkus.grpc.GrpcService;
-import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
@@ -16,6 +15,11 @@ import org.jboss.logging.Logger;
 /**
  * Main platform registration service implementation.
  * Updated to use the unified Register/Unregister API from the new proto definition.
+ *
+ * <p>All RPC methods delegate to reactive Mutiny handlers and return {@code Uni} or
+ * {@code Multi} immediately — no blocking work in this layer. Discovery and DB paths
+ * use Vert.x / Hibernate Reactive; Apicurio and Kafka Admin blocking calls run on
+ * Quarkus virtual threads inside those handlers (not via gRPC annotations).
  */
 @GrpcService
 public class PlatformRegistrationService extends MutinyPlatformRegistrationServiceGrpc.PlatformRegistrationServiceImplBase {
@@ -34,18 +38,13 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
     @Inject
     SchemaRetrievalHandler schemaRetrievalHandler;
 
-    /**
-     * Unified registration method - routes based on ServiceType.
-     * Replaces the old separate registerService/registerModule methods.
-     */
-    @Blocking
     @Override
     public Multi<RegisterResponse> register(RegisterRequest request) {
         ServiceType type = request.getType();
         LOG.infof("Received registration request for: %s (type=%s)", request.getName(), type);
 
         Multi<RegistrationEvent> events;
-        
+
         switch (type) {
             case SERVICE_TYPE_SERVICE:
                 events = serviceRegistrationHandler.registerService(request);
@@ -64,25 +63,14 @@ public class PlatformRegistrationService extends MutinyPlatformRegistrationServi
                 return Multi.createFrom().failure(
                     new IllegalArgumentException("Must specify service type: SERVICE_TYPE_SERVICE, SERVICE_TYPE_MODULE, or SERVICE_TYPE_CONNECTOR"));
         }
-        
-        // Wrap RegistrationEvent in RegisterResponse
+
         return events.map(event -> RegisterResponse.newBuilder().setEvent(event).build());
     }
 
-    /**
-     * Unified unregistration method.
-     * Replaces the old separate unregisterService/unregisterModule methods.
-     * Routes to appropriate handler based on looking up the service in Consul.
-     * For simplicity, we try service unregistration first.
-     */
     @Override
     public Uni<UnregisterResponse> unregister(UnregisterRequest request) {
-        LOG.infof("Received unregistration request for: %s at %s:%d", 
+        LOG.infof("Received unregistration request for: %s at %s:%d",
             request.getName(), request.getHost(), request.getPort());
-        
-        // Both handlers now use the same ConsulRegistrar.unregisterService method
-        // and return the same UnregisterResponse type, so we can use either handler.
-        // Using serviceRegistrationHandler as the primary (it's simpler).
         return serviceRegistrationHandler.unregisterService(request);
     }
 
