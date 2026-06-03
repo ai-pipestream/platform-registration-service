@@ -1,10 +1,11 @@
 package ai.pipestream.registration.topics;
 
+import io.quarkus.virtual.threads.VirtualThreads;
 import io.smallrye.mutiny.Uni;
-import io.smallrye.mutiny.infrastructure.Infrastructure;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -26,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Mirrors the engine's {@code KafkaTopicRegistrar.ensureProcessingTopic}
  * idempotent pattern (listTopics → skip if present → createTopics). The
- * blocking AdminClient work runs on the Mutiny worker pool so it composes
+ * blocking AdminClient work runs on Quarkus virtual threads so it composes
  * concurrently with the Apicurio schema-registration unis without
  * blocking the Vert.x event loop. Topic-ensure failure is isolated by
  * the caller — module registration must not fail because Kafka hiccuped.
@@ -47,6 +48,10 @@ public class ModuleTopicProvisioner {
 
     @ConfigProperty(name = "pipestream.kafka.default-replication-factor", defaultValue = "1")
     short defaultReplicationFactor;
+
+    @Inject
+    @VirtualThreads
+    java.util.concurrent.Executor virtualThreadExecutor;
 
     private AdminClient adminClient;
 
@@ -106,6 +111,6 @@ public class ModuleTopicProvisioner {
                         "ensureModuleTopic failed for " + topic + ": " + e.getMessage(), e);
             }
             return null;
-        }).runSubscriptionOn(Infrastructure.getDefaultWorkerPool());
+        }).runSubscriptionOn(virtualThreadExecutor);
     }
 }
