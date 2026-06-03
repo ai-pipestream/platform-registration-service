@@ -50,11 +50,6 @@ dependencies {
     implementation 'org.flywaydb:flyway-database-postgresql'
     implementation 'io.quarkus:quarkus-messaging-kafka'
 
-    // Quarkus Dynamic gRPC Extension (replaces local dynamic-grpc client implementation)
-    // Quarkus auto-resolves deployment module via extension metadata
-    // Version managed by pipestream-bom
-    implementation 'ai.pipestream:quarkus-dynamic-grpc'
-
     // Pipestream service registration extension (provides ConsulRegistrar, ConsulHealthChecker, ConsulClient producer)
     // Quarkus auto-resolves the deployment module via extension metadata
     implementation 'ai.pipestream:pipestream-service-registration'
