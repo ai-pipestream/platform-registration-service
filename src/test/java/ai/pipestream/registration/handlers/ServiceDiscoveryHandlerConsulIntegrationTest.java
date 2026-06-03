@@ -7,7 +7,6 @@ import ai.pipestream.platform.registration.v1.ResolveServiceResponse;
 import ai.pipestream.test.support.ConsulTestResource;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
-import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.ext.consul.ConsulClient;
 import io.vertx.ext.consul.ServiceOptions;
 import jakarta.inject.Inject;
@@ -73,8 +72,7 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
             .setServiceName(serviceName)
             .build();
 
-        ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request)
-            .await().atMost(Duration.ofSeconds(10));
+        ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request);
 
         // Assert
         assertThat("Response should not be null", response, is(notNullValue()));
@@ -131,8 +129,7 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
             .setServiceName(serviceName)
             .build();
 
-        ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request)
-            .await().atMost(Duration.ofSeconds(10));
+        ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request);
 
         // Assert
         assertThat("Response should not be null", response, is(notNullValue()));
@@ -172,8 +169,7 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
             .await().atMost(Duration.ofSeconds(10));
 
         // Act - List all services
-        var listResponse = serviceDiscoveryHandler.listServices()
-            .await().atMost(Duration.ofSeconds(10));
+        var listResponse = serviceDiscoveryHandler.listServices();
 
         // Assert - Find our service in the list
         var ourService = listResponse.getServicesList().stream()

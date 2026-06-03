@@ -5,7 +5,7 @@ import ai.pipestream.platform.registration.v1.GetModuleSchemaResponse;
 import ai.pipestream.registration.handlers.SchemaRetrievalHandler;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import io.smallrye.mutiny.Uni;
+import io.smallrye.common.annotation.RunOnVirtualThread;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
@@ -24,6 +24,8 @@ import java.util.Map;
  *
  * <p>Schemas are registered inline at module startup and stored in the
  * platform DB + Apicurio. This endpoint does not call running module instances.
+ *
+ * <p>Runs on a virtual thread so the blocking DB/Apicurio lookups never pin the event loop.
  */
 @Path("/modules")
 public class ModuleSchemaResource {
@@ -34,7 +36,8 @@ public class ModuleSchemaResource {
     @GET
     @Path("/{name}/schema")
     @Produces(MediaType.APPLICATION_JSON)
-    public Uni<Response> getModuleSchema(
+    @RunOnVirtualThread
+    public Response getModuleSchema(
             @PathParam("name") String name,
             @QueryParam("version") String version) {
         GetModuleSchemaRequest.Builder requestBuilder = GetModuleSchemaRequest.newBuilder()
@@ -43,16 +46,15 @@ public class ModuleSchemaResource {
             requestBuilder.setVersion(version);
         }
 
-        return schemaRetrievalHandler.getModuleSchema(requestBuilder.build())
-                .map(this::toJsonResponse)
-                .map(body -> Response.ok(body).build())
-                .onFailure(StatusRuntimeException.class).transform(error -> {
-                    StatusRuntimeException sre = (StatusRuntimeException) error;
-                    if (sre.getStatus().getCode() == Status.Code.NOT_FOUND) {
-                        throw new NotFoundException(sre.getStatus().getDescription(), sre);
-                    }
-                    throw error;
-                });
+        try {
+            GetModuleSchemaResponse response = schemaRetrievalHandler.getModuleSchema(requestBuilder.build());
+            return Response.ok(toJsonResponse(response)).build();
+        } catch (StatusRuntimeException sre) {
+            if (sre.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                throw new NotFoundException(sre.getStatus().getDescription(), sre);
+            }
+            throw sre;
+        }
     }
 
     private Map<String, Object> toJsonResponse(GetModuleSchemaResponse response) {

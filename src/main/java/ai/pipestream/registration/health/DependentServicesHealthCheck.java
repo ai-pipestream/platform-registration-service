@@ -1,8 +1,7 @@
 package ai.pipestream.registration.health;
 
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
-import io.vertx.mutiny.ext.consul.ConsulClient;
-import io.vertx.mutiny.sqlclient.Pool;
+import io.vertx.ext.consul.ConsulClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.health.HealthCheck;
@@ -10,7 +9,10 @@ import org.eclipse.microprofile.health.HealthCheckResponse;
 import org.eclipse.microprofile.health.HealthCheckResponseBuilder;
 import org.eclipse.microprofile.health.Readiness;
 
-import java.time.Duration;
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.Statement;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Health check for services that platform-registration-service directly depends on.
@@ -22,17 +24,21 @@ import java.time.Duration;
  * - PostgreSQL (service registry database)
  * - Consul (service discovery backend)
  * - Apicurio Registry (schema storage)
+ *
+ * <p>All checks are blocking. The database (JDBC query timeout) and Consul (future
+ * timeout) checks are bounded to ~2s; the Apicurio check relies on the registry
+ * client's own HTTP timeout rather than an explicit bound here.
  */
 @Readiness
 @ApplicationScoped
 public class DependentServicesHealthCheck implements HealthCheck {
 
     @Inject
-    Pool databasePool;
-    
+    DataSource dataSource;
+
     @Inject
     ConsulClient consulClient;
-    
+
     @Inject
     ApicurioRegistryClient apicurioClient;
 
@@ -41,12 +47,12 @@ public class DependentServicesHealthCheck implements HealthCheck {
         HealthCheckResponseBuilder responseBuilder = HealthCheckResponse.named("dependent-services")
                 .up();
 
-        // Check Database (reactive)
+        // Check Database
         checkDatabase(responseBuilder);
-        
+
         // Check Consul
         checkConsul(responseBuilder);
-        
+
         // Check Apicurio Registry
         checkApicurio(responseBuilder);
 
@@ -54,12 +60,10 @@ public class DependentServicesHealthCheck implements HealthCheck {
     }
 
     private void checkDatabase(HealthCheckResponseBuilder builder) {
-        try {
-            // Use reactive database client to check connection
-            databasePool.query("SELECT 1")
-                    .execute()
-                    .await()
-                    .atMost(Duration.ofSeconds(2));
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.setQueryTimeout(2);
+            statement.execute("SELECT 1");
             builder.withData("database", "UP")
                    .withData("database-details", "Service registry database is accessible");
         } catch (Exception e) {
@@ -68,13 +72,14 @@ public class DependentServicesHealthCheck implements HealthCheck {
                    .down();
         }
     }
-    
+
     private void checkConsul(HealthCheckResponseBuilder builder) {
         try {
-            // Check Consul agent connectivity using Mutiny API
+            // Check Consul agent connectivity (bridged to blocking, bounded to 2s)
             consulClient.agentInfo()
-                    .await()
-                    .atMost(Duration.ofSeconds(2));
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(2, TimeUnit.SECONDS);
             builder.withData("consul", "UP")
                    .withData("consul-details", "Connected to Consul agent");
         } catch (Exception e) {
@@ -83,15 +88,13 @@ public class DependentServicesHealthCheck implements HealthCheck {
                    .down();
         }
     }
-    
+
     private void checkApicurio(HealthCheckResponseBuilder builder) {
         try {
-            // Check Apicurio Registry health
-            Boolean isHealthy = apicurioClient.isHealthy()
-                    .await()
-                    .atMost(Duration.ofSeconds(2));
-            
-            if (Boolean.TRUE.equals(isHealthy)) {
+            // Check Apicurio Registry health (blocking; never throws — returns false on failure)
+            boolean isHealthy = apicurioClient.isHealthy();
+
+            if (isHealthy) {
                 builder.withData("apicurio", "UP")
                        .withData("apicurio-details", "Schema registry is accessible");
             } else {

@@ -6,25 +6,16 @@ import ai.pipestream.registration.entity.ConfigSchema;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
 import ai.pipestream.registration.repository.ApicurioRegistryException;
 import ai.pipestream.registration.repository.ModuleRepository;
-import com.github.tomakehurst.wiremock.client.WireMock;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
-import io.smallrye.mutiny.Uni;
-import io.smallrye.stork.Stork;
-import io.smallrye.stork.api.ServiceDefinition;
-import io.smallrye.stork.integration.DefaultStorkInfrastructure;
-import io.smallrye.stork.spi.config.SimpleServiceConfig;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.DisabledIf;
 import org.mockito.Mockito;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -35,7 +26,6 @@ import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for SchemaRetrievalHandler.
- * Note: Tests using WireMock gRPC stubs are disabled until grpc-wiremock is adapted for BSR protos.
  */
 @QuarkusTest
 class SchemaRetrievalHandlerTest {
@@ -68,7 +58,7 @@ class SchemaRetrievalHandlerTest {
         schema.syncStatus = ConfigSchema.SyncStatus.SYNCED;
 
         when(moduleRepository.findSchemaById(anyString()))
-            .thenReturn(Uni.createFrom().item(schema));
+            .thenReturn(schema);
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
@@ -76,8 +66,7 @@ class SchemaRetrievalHandlerTest {
             .build();
 
         // Act
-        GetModuleSchemaResponse response = schemaRetrievalHandler.getModuleSchema(request)
-            .await().indefinitely();
+        GetModuleSchemaResponse response = schemaRetrievalHandler.getModuleSchema(request);
 
         // Assert
         assertThat("Response should not be null", response, is(notNullValue()));
@@ -114,15 +103,14 @@ class SchemaRetrievalHandlerTest {
         schema.createdAt = LocalDateTime.now();
 
         when(moduleRepository.findLatestSchemaByServiceName(eq(serviceName)))
-            .thenReturn(Uni.createFrom().item(schema));
+            .thenReturn(schema);
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
             .build(); // No version = latest
 
         // Act
-        GetModuleSchemaResponse response = schemaRetrievalHandler.getModuleSchema(request)
-            .await().indefinitely();
+        GetModuleSchemaResponse response = schemaRetrievalHandler.getModuleSchema(request);
 
         // Assert
         assertThat("Response should not be null", response, is(notNullValue()));
@@ -143,13 +131,13 @@ class SchemaRetrievalHandlerTest {
         String jsonSchema = "{\"type\": \"object\", \"properties\": {\"key\": {\"type\": \"string\"}}}";
 
         when(moduleRepository.findSchemaById(anyString()))
-            .thenReturn(Uni.createFrom().nullItem());
+            .thenReturn(null);
 
         when(apicurioClient.getSchema(eq(serviceName), eq(version)))
-            .thenReturn(Uni.createFrom().item(jsonSchema));
+            .thenReturn(jsonSchema);
 
         when(apicurioClient.getArtifactMetadata(eq(serviceName)))
-            .thenReturn(Uni.createFrom().nullItem());
+            .thenReturn(null);
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
@@ -157,8 +145,7 @@ class SchemaRetrievalHandlerTest {
             .build();
 
         // Act
-        GetModuleSchemaResponse response = schemaRetrievalHandler.getModuleSchema(request)
-            .await().indefinitely();
+        GetModuleSchemaResponse response = schemaRetrievalHandler.getModuleSchema(request);
 
         // Assert
         assertThat("Response should not be null", response, is(notNullValue()));
@@ -181,12 +168,11 @@ class SchemaRetrievalHandlerTest {
         String version = "1.0.0";
 
         when(moduleRepository.findSchemaById(anyString()))
-            .thenReturn(Uni.createFrom().nullItem());
+            .thenReturn(null);
 
         when(apicurioClient.getSchema(eq(serviceName), eq(version)))
-            .thenReturn(Uni.createFrom().failure(
-                new ApicurioRegistryException("Schema not found", serviceName, "artifact-id",
-                    new RuntimeException("404 Not Found"))));
+            .thenThrow(new ApicurioRegistryException("Schema not found", serviceName, "artifact-id",
+                    new RuntimeException("404 Not Found")));
 
         GetModuleSchemaRequest request = GetModuleSchemaRequest.newBuilder()
             .setModuleName(serviceName)
@@ -194,10 +180,8 @@ class SchemaRetrievalHandlerTest {
             .build();
 
         // Act & Assert
-        StatusRuntimeException exception = assertThrows(StatusRuntimeException.class, () -> {
-            schemaRetrievalHandler.getModuleSchema(request)
-                .await().indefinitely();
-        });
+        StatusRuntimeException exception = assertThrows(StatusRuntimeException.class, () ->
+            schemaRetrievalHandler.getModuleSchema(request));
 
         assertThat("Exception status should be NOT_FOUND",
             exception.getStatus().getCode(), is(equalTo(Status.Code.NOT_FOUND)));

@@ -8,25 +8,24 @@ import ai.pipestream.registration.entity.ServiceModule;
 import ai.pipestream.registration.events.OpenSearchEventsProducer;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
 import ai.pipestream.registration.repository.ModuleRepository;
-import io.smallrye.mutiny.Multi;
-import io.smallrye.mutiny.Uni;
-import io.smallrye.mutiny.unchecked.Unchecked;
-import io.vertx.core.Context;
 import io.vertx.core.Vertx;
-import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
-import io.smallrye.common.vertx.VertxContext;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
- * Handles module registration operations with proper reactive flow.
- * Updated to use the unified RegisterRequest from the new proto API.
+ * Handles module registration operations.
+ *
+ * <p>Blocking — registration streams {@link RegistrationEvent}s to the supplied sink as each
+ * step completes (validate → Consul → health → Apicurio → database → OpenSearch). The external
+ * Consul APIs are Mutiny-only and bridged with {@link UniBlocking}; everything else runs as
+ * straight-line blocking code on the caller's virtual thread.
  */
 @ApplicationScoped
 public class ModuleRegistrationHandler {
@@ -64,72 +63,52 @@ public class ModuleRegistrationHandler {
     /**
      * Register a module with streaming status updates.
      * Expects RegisterRequest with type=SERVICE_TYPE_MODULE and inline {@code module} metadata.
-     * Flow: Validate → Consul → Health → Apicurio → Database → OpenSearch
+     * Flow: Validate → Consul → Health → Apicurio → Database → OpenSearch.
+     * Emits each {@link RegistrationEvent} to {@code sink} as the flow progresses.
      */
-    public Multi<RegistrationEvent> registerModule(RegisterRequest request) {
+    public void registerModule(RegisterRequest request, Consumer<RegistrationEvent> sink) {
         Connectivity connectivity = request.getConnectivity();
         String host = connectivity.getAdvertisedHost();
         int port = connectivity.getAdvertisedPort();
         String moduleName = request.getName();
         String serviceId = ConsulRegistrar.generateServiceId(moduleName, host, port);
 
-        return Uni.createFrom().item(Unchecked.supplier(() -> {
+        try {
             ValidationResult validation = RegisterRequestValidator.validateModuleRequest(request);
             if (!validation.valid()) {
                 throw new IllegalArgumentException("Invalid module registration request: " + validation.reasonsAsString());
             }
-            return request;
-        }))
-        .onItem().transformToMulti(validatedRequest -> Multi.createBy().concatenating()
-                .streams(
-                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting module registration", serviceId)),
-                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Module registration request validated", null)),
-                    executeModuleRegistrationAsMulti(validatedRequest, serviceId)
-                ))
-        .onFailure().recoverWithMulti(error -> {
+
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting module registration", serviceId));
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Module registration request validated", null));
+
+            boolean consulSuccess = UniBlocking.await(consulRegistrar.registerService(request, serviceId));
+            if (!consulSuccess) {
+                sink.accept(createEventWithError(serviceId, "Failed to register with Consul", "Consul registration failed"));
+                return;
+            }
+
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_REGISTERED, "Module registered with Consul", serviceId));
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
+
+            boolean healthy = UniBlocking.await(healthChecker.waitForHealthy(moduleName, serviceId));
+            if (!healthy) {
+                rollbackConsulRegistration(serviceId);
+                sink.accept(createEventWithError(serviceId, "Module failed health checks",
+                        "Module did not become healthy within timeout period"));
+                return;
+            }
+
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Module reported healthy by Consul", null));
+
+            completeRegistrationFlow(request, serviceId, sink);
+        } catch (Exception error) {
             LOG.error("Module registration failed", error);
-            return Multi.createFrom().items(
-                createEventWithError(serviceId, "Registration failed", error.getMessage())
-            );
-        });
+            sink.accept(createEventWithError(serviceId, "Registration failed", error.getMessage()));
+        }
     }
 
-    private Multi<RegistrationEvent> executeModuleRegistrationAsMulti(RegisterRequest request, String serviceId) {
-        return consulRegistrar.registerService(request, serviceId)
-            .onItem().transformToMulti(consulSuccess -> {
-                if (!consulSuccess) {
-                    return Multi.createFrom().item(
-                        createEventWithError(serviceId, "Failed to register with Consul", "Consul registration failed")
-                    );
-                }
-
-                return Multi.createBy().concatenating().streams(
-                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_REGISTERED, "Module registered with Consul", serviceId)),
-                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null)),
-                    continueRegistrationFlow(request, serviceId)
-                );
-            });
-    }
-
-    private Multi<RegistrationEvent> continueRegistrationFlow(RegisterRequest request, String serviceId) {
-        return healthChecker.waitForHealthy(request.getName(), serviceId)
-            .onItem().transformToMulti(healthy -> {
-                if (!healthy) {
-                    return rollbackConsulRegistration(serviceId)
-                        .onItem().transformToMulti(v -> Multi.createFrom().item(
-                            createEventWithError(serviceId, "Module failed health checks",
-                                "Module did not become healthy within timeout period")
-                        ));
-                }
-
-                return Multi.createBy().concatenating().streams(
-                    Multi.createFrom().item(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Module reported healthy by Consul", null)),
-                    completeRegistrationFlow(request, serviceId)
-                );
-            });
-    }
-
-    private Multi<RegistrationEvent> completeRegistrationFlow(RegisterRequest request, String serviceId) {
+    private void completeRegistrationFlow(RegisterRequest request, String serviceId, Consumer<RegistrationEvent> sink) {
         Connectivity connectivity = request.getConnectivity();
         String host = connectivity.getAdvertisedHost();
         int port = connectivity.getAdvertisedPort();
@@ -142,134 +121,90 @@ public class ModuleRegistrationHandler {
             String detail = moduleMetadata.hasHealthCheckMessage()
                     ? moduleMetadata.getHealthCheckMessage()
                     : "Module reported health_check_passed=false";
-            return Multi.createFrom().item(
-                    createEventWithError(serviceId, "Module health check failed", detail));
+            sink.accept(createEventWithError(serviceId, "Module health check failed", detail));
+            return;
         }
 
         String schema = extractOrSynthesizeSchema(moduleMetadata, moduleName);
         Map<String, Object> metadataMap = buildMetadataMap(moduleMetadata);
 
-        Context safeCtx = VertxContext.createNewDuplicatedContext();
+        // Persist to the database (blocking, @Transactional in the repository).
+        ServiceModule savedModule = moduleRepository.registerModule(
+                moduleName, host, port, version, metadataMap, schema);
 
-        return Uni.createFrom().item(1)
-            .emitOn(r -> safeCtx.runOnContext(x -> r.run()))
-            .chain(ignored -> moduleRepository.registerModule(
-                    moduleName,
-                    host,
-                    port,
-                    version,
-                    metadataMap,
-                    schema
-            ))
-            .map(savedModule -> new DatabaseSaveContext(savedModule, schema))
-            .chain(dbContext -> {
-                Uni<ApicurioRegistryClient.SchemaRegistrationResponse> configSchemaUni =
-                    apicurioClient.createOrUpdateSchema(moduleName, version, dbContext.schema)
-                        .onFailure().recoverWithItem(err -> {
-                            LOG.warnf(err, "Apicurio config schema registration failed for %s:%s, continuing without registry sync",
-                                    moduleName, version);
-                            return null;
-                        });
-
-                Uni<ApicurioRegistryClient.SchemaRegistrationResponse> apiSchemaUni =
-                    fetchOpenApiSpec(host, port, request)
-                        .chain(openApiSpec -> {
-                            if (openApiSpec != null && !openApiSpec.isBlank()) {
-                                LOG.infof("Registering OpenAPI spec for %s:%s to Apicurio", moduleName, version);
-                                return apicurioClient.createOrUpdateSchemaWithArtifactBase(
-                                        moduleName + "-api", version, openApiSpec)
-                                    .onFailure().recoverWithItem(err -> {
-                                        LOG.warnf(err, "Apicurio API schema registration failed for %s:%s, continuing without registry sync",
-                                                moduleName, version);
-                                        return null;
-                                    });
-                            }
-                            LOG.debugf("No OpenAPI spec available for %s:%s, skipping API schema registration",
-                                    moduleName, version);
-                            return Uni.createFrom().nullItem();
-                        });
-
-                return Uni.combine().all().unis(configSchemaUni, apiSchemaUni).asTuple()
-                    .map(tuple -> new SavedContext(dbContext.module, tuple.getItem1(), tuple.getItem2()));
-            })
-            .onItem().transformToMulti(savedContext -> {
-                openSearchProducer.emitModuleRegistered(
-                    savedContext.module.serviceId,
-                    moduleName,
-                    host,
-                    port,
-                    version,
-                    savedContext.module.configSchemaId,
-                    savedContext.configSchemaResult != null ? savedContext.configSchemaResult.getArtifactId() : null
-                );
-
-                return Multi.createFrom().items(
-                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_METADATA_RETRIEVED, "Module metadata retrieved", null),
-                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Schema validated or synthesized", null),
-                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_DATABASE_SAVED, "Module registration saved to database", savedContext.module.serviceId),
-                    (savedContext.configSchemaResult != null
-                        ? createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED, "Config schema registered in Apicurio", null)
-                        : createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Apicurio config schema sync skipped (failure)", null)
-                    ),
-                    createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED, "Module registration completed successfully", savedContext.module.serviceId)
-                );
-            });
-    }
-
-    private static class DatabaseSaveContext {
-        final ServiceModule module;
-        final String schema;
-
-        DatabaseSaveContext(ServiceModule module, String schema) {
-            this.module = module;
-            this.schema = schema;
+        // Register the config schema in Apicurio (best effort — DB is the system of record).
+        ApicurioRegistryClient.SchemaRegistrationResponse configSchemaResult;
+        try {
+            configSchemaResult = apicurioClient.createOrUpdateSchema(moduleName, version, schema);
+        } catch (Exception err) {
+            LOG.warnf(err, "Apicurio config schema registration failed for %s:%s, continuing without registry sync",
+                    moduleName, version);
+            configSchemaResult = null;
         }
-    }
 
-    private static class SavedContext {
-        final ServiceModule module;
-        final ApicurioRegistryClient.SchemaRegistrationResponse configSchemaResult;
-        final ApicurioRegistryClient.SchemaRegistrationResponse apiSchemaResult;
-
-        SavedContext(ServiceModule module,
-                    ApicurioRegistryClient.SchemaRegistrationResponse configSchemaResult,
-                    ApicurioRegistryClient.SchemaRegistrationResponse apiSchemaResult) {
-            this.module = module;
-            this.configSchemaResult = configSchemaResult;
-            this.apiSchemaResult = apiSchemaResult;
+        // Fetch and register the module's OpenAPI spec, if it exposes one (best effort).
+        String openApiSpec = fetchOpenApiSpec(host, port, request);
+        if (openApiSpec != null && !openApiSpec.isBlank()) {
+            LOG.infof("Registering OpenAPI spec for %s:%s to Apicurio", moduleName, version);
+            try {
+                apicurioClient.createOrUpdateSchemaWithArtifactBase(moduleName + "-api", version, openApiSpec);
+            } catch (Exception err) {
+                LOG.warnf(err, "Apicurio API schema registration failed for %s:%s, continuing without registry sync",
+                        moduleName, version);
+            }
+        } else {
+            LOG.debugf("No OpenAPI spec available for %s:%s, skipping API schema registration",
+                    moduleName, version);
         }
+
+        openSearchProducer.emitModuleRegistered(
+                savedModule.serviceId,
+                moduleName,
+                host,
+                port,
+                version,
+                savedModule.configSchemaId,
+                configSchemaResult != null ? configSchemaResult.getArtifactId() : null
+        );
+
+        sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_METADATA_RETRIEVED, "Module metadata retrieved", null));
+        sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Schema validated or synthesized", null));
+        sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_DATABASE_SAVED, "Module registration saved to database", savedModule.serviceId));
+        sink.accept(configSchemaResult != null
+                ? createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED, "Config schema registered in Apicurio", null)
+                : createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_SCHEMA_VALIDATED, "Apicurio config schema sync skipped (failure)", null));
+        sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED, "Module registration completed successfully", savedModule.serviceId));
     }
 
-    public Uni<UnregisterResponse> unregisterModule(UnregisterRequest request) {
+    public UnregisterResponse unregisterModule(UnregisterRequest request) {
         String serviceId = ConsulRegistrar.generateServiceId(request.getName(), request.getHost(), request.getPort());
 
-        return consulRegistrar.unregisterService(serviceId)
-            .map(success -> {
-                UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
-                    .setSuccess(success)
-                    .setTimestamp(createTimestamp());
+        boolean success = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
 
-                if (success) {
-                    response.setMessage("Module unregistered successfully");
-                    openSearchProducer.emitModuleUnregistered(serviceId, request.getName());
-                } else {
-                    response.setMessage("Failed to unregister module");
-                }
+        UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
+            .setSuccess(success)
+            .setTimestamp(createTimestamp());
 
-                return response.build();
-            });
+        if (success) {
+            response.setMessage("Module unregistered successfully");
+            openSearchProducer.emitModuleUnregistered(serviceId, request.getName());
+        } else {
+            response.setMessage("Failed to unregister module");
+        }
+
+        return response.build();
     }
 
-    private Uni<Void> rollbackConsulRegistration(String serviceId) {
-        return consulRegistrar.unregisterService(serviceId)
-            .onItem().invoke(success -> {
-                if (success) {
-                    LOG.infof("Rolled back Consul registration for %s", serviceId);
-                } else {
-                    LOG.errorf("Failed to rollback Consul registration for %s", serviceId);
-                }
-            })
-            .replaceWith(Uni.createFrom().voidItem());
+    private void rollbackConsulRegistration(String serviceId) {
+        // Matches the original reactive flow: a thrown exception propagates to registerModule's
+        // handler (→ generic "Registration failed"), while a false result is only logged and the
+        // caller continues to emit the accurate "Module failed health checks" event.
+        boolean success = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
+        if (success) {
+            LOG.infof("Rolled back Consul registration for %s", serviceId);
+        } else {
+            LOG.errorf("Failed to rollback Consul registration for %s", serviceId);
+        }
     }
 
     private String extractOrSynthesizeSchema(ModuleRegistration metadata, String moduleName) {
@@ -311,7 +246,7 @@ public class ModuleRegistrationHandler {
         return map;
     }
 
-    private Uni<String> fetchOpenApiSpec(String host, int port, RegisterRequest request) {
+    private String fetchOpenApiSpec(String host, int port, RegisterRequest request) {
         String openApiPath = "/q/openapi";
         int httpPort = port;
         String httpHost = host;
@@ -337,12 +272,13 @@ public class ModuleRegistrationHandler {
         final String resolvedHost = httpHost;
         final int resolvedPort = httpPort;
 
-        return Uni.createFrom().completionStage(() ->
-            webClient.get(resolvedPort, resolvedHost, path)
+        try {
+            var response = webClient.get(resolvedPort, resolvedHost, path)
                     .timeout(5000)
                     .send()
                     .toCompletionStage()
-        ).map(response -> {
+                    .toCompletableFuture()
+                    .get();
             if (response.statusCode() == 200) {
                 String spec = response.bodyAsString();
                 LOG.debugf("Fetched OpenAPI spec from %s:%d (%d bytes)", resolvedHost, resolvedPort, spec.length());
@@ -351,11 +287,16 @@ public class ModuleRegistrationHandler {
             LOG.debugf("OpenAPI endpoint returned %d for %s:%d, skipping API schema registration",
                     (Object) response.statusCode(), resolvedHost, resolvedPort);
             return null;
-        }).onFailure().recoverWithItem(err -> {
+        } catch (InterruptedException err) {
+            Thread.currentThread().interrupt();
+            LOG.debugf("Interrupted fetching OpenAPI spec from %s:%d, skipping API schema registration",
+                    resolvedHost, resolvedPort);
+            return null;
+        } catch (Exception err) {
             LOG.debugf("OpenAPI endpoint not available at %s:%d, skipping API schema registration: %s",
                     resolvedHost, resolvedPort, err.getMessage());
             return null;
-        });
+        }
     }
 
     private RegistrationEvent createEvent(PlatformEventType type, String message, String serviceId) {

@@ -1,6 +1,6 @@
 package ai.pipestream.registration.entity;
 
-import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
+import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;

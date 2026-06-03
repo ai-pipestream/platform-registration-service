@@ -5,10 +5,7 @@ import io.apicurio.registry.rest.client.models.*;
 import io.apicurio.registry.types.ArtifactType;
 import io.apicurio.registry.utils.IoUtil;
 import io.kiota.http.vertx.VertXRequestAdapter;
-import io.quarkus.virtual.threads.VirtualThreads;
-import io.smallrye.mutiny.Uni;
-import io.smallrye.mutiny.unchecked.Unchecked;
-import io.vertx.mutiny.core.Vertx;
+import io.vertx.core.Vertx;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -17,12 +14,13 @@ import org.jboss.logging.Logger;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
 
 /**
  * Client for interacting with Apicurio Registry v3.
  * This is the secondary storage for schemas (primary is PostgreSQL).
+ *
+ * <p>The Apicurio v3 SDK calls are synchronous/blocking. Callers invoke these methods
+ * from virtual threads, so the blocking I/O never pins the Vert.x event loop.
  */
 @ApplicationScoped
 public class ApicurioRegistryClient {
@@ -33,10 +31,6 @@ public class ApicurioRegistryClient {
     @Inject
     Vertx vertx;
 
-    @Inject
-    @VirtualThreads
-    Executor virtualThreadExecutor;
-
     @ConfigProperty(name = "apicurio.registry.url", defaultValue = "http://localhost:8081")
     String apicurioUrl;
 
@@ -46,7 +40,7 @@ public class ApicurioRegistryClient {
     @PostConstruct
     void init() {
         // Initialize the v3 client with VertX adapter
-        this.requestAdapter = new VertXRequestAdapter(vertx.getDelegate());
+        this.requestAdapter = new VertXRequestAdapter(vertx);
 
         // Smart URL handling: accept both base URLs and full API endpoint URLs
         String baseUrl;
@@ -69,9 +63,9 @@ public class ApicurioRegistryClient {
     }
 
     /**
-     * Create or update a schema in Apicurio Registry
+     * Create or update a schema in Apicurio Registry.
      */
-    public Uni<SchemaRegistrationResponse> createOrUpdateSchema(String serviceName, String version, String jsonSchema) {
+    public SchemaRegistrationResponse createOrUpdateSchema(String serviceName, String version, String jsonSchema) {
         String artifactId = versionedArtifactId(serviceName, version);
         return createOrUpdateSchemaWithArtifactId(artifactId, version, jsonSchema);
     }
@@ -80,7 +74,7 @@ public class ApicurioRegistryClient {
      * Create or update a schema with a custom artifact base name.
      * The artifact ID will be built from the base name and version.
      */
-    public Uni<SchemaRegistrationResponse> createOrUpdateSchemaWithArtifactBase(String artifactBase, String version, String jsonSchema) {
+    public SchemaRegistrationResponse createOrUpdateSchemaWithArtifactBase(String artifactBase, String version, String jsonSchema) {
         String artifactId = versionedArtifactId(artifactBase, version);
         return createOrUpdateSchemaWithArtifactId(artifactId, version, jsonSchema);
     }
@@ -89,200 +83,175 @@ public class ApicurioRegistryClient {
      * Create or update a schema with a pre-built artifact ID.
      * The artifactId should already include the version suffix (use versionedArtifactId to build it).
      */
-    public Uni<SchemaRegistrationResponse> createOrUpdateSchemaWithArtifactId(String artifactId, String version, String jsonSchema) {
+    public SchemaRegistrationResponse createOrUpdateSchemaWithArtifactId(String artifactId, String version, String jsonSchema) {
+        try {
+            // Create the artifact with the JSON schema
+            CreateArtifact createArtifact = new CreateArtifact();
+            createArtifact.setArtifactId(artifactId);
+            createArtifact.setArtifactType(ArtifactType.JSON);
 
-        // Blocking Apicurio SDK — offload to Quarkus virtual-thread executor (JDK 21+)
-        return Uni.createFrom().item(Unchecked.supplier(() -> {
-            try {
-                // Create the artifact with the JSON schema
-                CreateArtifact createArtifact = new CreateArtifact();
-                createArtifact.setArtifactId(artifactId);
-                createArtifact.setArtifactType(ArtifactType.JSON);
+            // Set up the first version
+            CreateVersion firstVersion = new CreateVersion();
+            VersionContent content = new VersionContent();
+            content.setContent(IoUtil.toString(jsonSchema.getBytes(StandardCharsets.UTF_8)));
+            content.setContentType("application/json");
+            firstVersion.setContent(content);
+            firstVersion.setVersion(version);
 
-                // Set up the first version
-                CreateVersion firstVersion = new CreateVersion();
-                VersionContent content = new VersionContent();
-                content.setContent(IoUtil.toString(jsonSchema.getBytes(StandardCharsets.UTF_8)));
-                content.setContentType("application/json");
-                firstVersion.setContent(content);
-                firstVersion.setVersion(version);
+            createArtifact.setFirstVersion(firstVersion);
 
-                createArtifact.setFirstVersion(firstVersion);
+            // Create or update the artifact - THIS IS A BLOCKING CALL
+            VersionMetaData versionMetaData = registryClient.groups()
+                    .byGroupId(DEFAULT_GROUP)
+                    .artifacts()
+                    .post(createArtifact, config -> {
+                        assert config.queryParameters != null;
+                        config.queryParameters.ifExists = IfArtifactExists.FIND_OR_CREATE_VERSION;
+                    })
+                    .getVersion();
 
-                // Create or update the artifact - THIS IS A BLOCKING CALL
-                VersionMetaData versionMetaData = registryClient.groups()
+            // Create response
+            assert versionMetaData != null;
+            SchemaRegistrationResponse response = new SchemaRegistrationResponse(
+                    artifactId,
+                    versionMetaData.getGlobalId(),
+                    versionMetaData.getVersion()
+            );
+
+            LOG.infof("Successfully registered schema with artifactId %s version %s (globalId: %d)",
+                    artifactId, version, versionMetaData.getGlobalId());
+
+            return response;
+        } catch (Exception e) {
+            String errorDetails = extractApicurioErrorDetails(e);
+
+            // Version already exists is not an error — it means a prior registration succeeded
+            if (errorDetails.contains("VersionAlreadyExists") || errorDetails.contains("already exists")) {
+                LOG.infof("Schema already registered for artifactId=%s version=%s, reusing existing registration",
+                        artifactId, version);
+                return new SchemaRegistrationResponse(artifactId, null, version);
+            }
+
+            LOG.errorf(e, "Apicurio schema registration failed for artifactId=%s version=%s: %s",
+                    artifactId, version, errorDetails);
+
+            throw new ApicurioRegistryException(
+                String.format("Failed to register schema for artifactId=%s version=%s: %s",
+                        artifactId, version, errorDetails),
+                null, // serviceName not available in this context
+                artifactId,
+                e
+            );
+        }
+    }
+
+    /**
+     * Get schema by raw artifact ID.
+     */
+    public String getSchemaByArtifactId(String artifactId, String version) {
+        try {
+            // Get the artifact content - THIS IS A BLOCKING CALL
+            if (version != null && !version.isEmpty()) {
+                // Get specific version
+                var content = registryClient.groups()
                         .byGroupId(DEFAULT_GROUP)
                         .artifacts()
-                        .post(createArtifact, config -> {
-                            assert config.queryParameters != null;
-                            config.queryParameters.ifExists = IfArtifactExists.FIND_OR_CREATE_VERSION;
-                        })
-                        .getVersion();
+                        .byArtifactId(artifactId)
+                        .versions()
+                        .byVersionExpression(version)
+                        .content()
+                        .get();
 
-                // Create response
-                assert versionMetaData != null;
-                SchemaRegistrationResponse response = new SchemaRegistrationResponse(
-                        artifactId,
-                        versionMetaData.getGlobalId(),
-                        versionMetaData.getVersion()
-                );
+                assert content != null;
+                return IoUtil.toString(content);
+            } else {
+                // Get latest version
+                var content = registryClient.groups()
+                        .byGroupId(DEFAULT_GROUP)
+                        .artifacts()
+                        .byArtifactId(artifactId)
+                        .versions()
+                        .byVersionExpression("latest")
+                        .content()
+                        .get();
 
-                LOG.infof("Successfully registered schema with artifactId %s version %s (globalId: %d)",
-                        artifactId, version, versionMetaData.getGlobalId());
-
-                return response;
-            } catch (Exception e) {
-                String errorDetails = extractApicurioErrorDetails(e);
-
-                // Version already exists is not an error — it means a prior registration succeeded
-                if (errorDetails.contains("VersionAlreadyExists") || errorDetails.contains("already exists")) {
-                    LOG.infof("Schema already registered for artifactId=%s version=%s, reusing existing registration",
-                            artifactId, version);
-                    return new SchemaRegistrationResponse(artifactId, null, version);
-                }
-
-                LOG.errorf(e, "Apicurio schema registration failed for artifactId=%s version=%s: %s",
-                        artifactId, version, errorDetails);
-
-                throw new ApicurioRegistryException(
-                    String.format("Failed to register schema for artifactId=%s version=%s: %s",
-                            artifactId, version, errorDetails),
-                    null, // serviceName not available in this context
-                    artifactId,
-                    e
-                );
+                assert content != null;
+                return IoUtil.toString(content);
             }
-        }))
-        .runSubscriptionOn(virtualThreadExecutor);
+        } catch (Exception e) {
+            LOG.errorf(e, "Failed to get schema for artifactId %s", artifactId);
+            throw new ApicurioRegistryException(
+                String.format("Failed to get schema for artifactId %s (version: %s)", artifactId, version),
+                null,
+                artifactId,
+                e
+            );
+        }
     }
 
     /**
-     * Get schema by raw artifact ID
+     * Get schema by artifact ID (legacy naming, uses versionedArtifactId internally).
      */
-    public Uni<String> getSchemaByArtifactId(String artifactId, String version) {
-        return Uni.createFrom().item(Unchecked.supplier(() -> {
-            try {
-                // Get the artifact content - THIS IS A BLOCKING CALL
-                if (version != null && !version.isEmpty()) {
-                    // Get specific version
-                    var content = registryClient.groups()
-                            .byGroupId(DEFAULT_GROUP)
-                            .artifacts()
-                            .byArtifactId(artifactId)
-                            .versions()
-                            .byVersionExpression(version)
-                            .content()
-                            .get();
-
-                    assert content != null;
-                    return IoUtil.toString(content);
-                } else {
-                    // Get latest version
-                    var content = registryClient.groups()
-                            .byGroupId(DEFAULT_GROUP)
-                            .artifacts()
-                            .byArtifactId(artifactId)
-                            .versions()
-                            .byVersionExpression("latest")
-                            .content()
-                            .get();
-
-                    assert content != null;
-                    return IoUtil.toString(content);
-                }
-            } catch (Exception e) {
-                LOG.errorf(e, "Failed to get schema for artifactId %s", artifactId);
-                throw new ApicurioRegistryException(
-                    String.format("Failed to get schema for artifactId %s (version: %s)", artifactId, version),
-                    null,
-                    artifactId,
-                    e
-                );
-            }
-        }))
-        .runSubscriptionOn(virtualThreadExecutor);
-    }
-
-    /**
-     * Get schema by artifact ID (legacy naming, uses versionedArtifactId internally)
-     */
-    public Uni<String> getSchema(String serviceName, String version) {
+    public String getSchema(String serviceName, String version) {
         String artifactId = versionedArtifactId(serviceName, version);
         return getSchemaByArtifactId(artifactId, version);
     }
 
     /**
-     * Check if Apicurio is healthy
+     * Check if Apicurio is healthy.
      */
-    public Uni<Boolean> isHealthy() {
-        return Uni.createFrom().item(() -> {
-            try {
-                // Try to access the system info endpoint - THIS IS A BLOCKING CALL
-                var systemInfo = registryClient.system().info().get();
-                return systemInfo != null;
-            } catch (Exception e) {
-                LOG.debugf("Health check failed: %s", e.getMessage());
-                return false;
-            }
-        })
-        .runSubscriptionOn(virtualThreadExecutor)
-        .onFailure().recoverWithItem(false);
+    public boolean isHealthy() {
+        try {
+            // Try to access the system info endpoint - THIS IS A BLOCKING CALL
+            var systemInfo = registryClient.system().info().get();
+            return systemInfo != null;
+        } catch (Exception e) {
+            LOG.debugf("Health check failed: %s", e.getMessage());
+            return false;
+        }
     }
 
     /**
-     * List all artifacts in the group (for reconciliation)
+     * List all artifacts in the group (for reconciliation).
      */
-    public Uni<List<SearchedArtifact>> listArtifacts() {
-        return Uni.createFrom().completionStage(() -> {
-            CompletableFuture<List<SearchedArtifact>> future = new CompletableFuture<>();
+    public List<SearchedArtifact> listArtifacts() {
+        try {
+            // Search for all artifacts in our group
+            ArtifactSearchResults results = registryClient.search()
+                    .artifacts()
+                    .get(config -> {
+                        assert config.queryParameters != null;
+                        config.queryParameters.groupId = DEFAULT_GROUP;
+                        config.queryParameters.limit = 500;
+                        config.queryParameters.offset = 0;
+                    });
 
-            try {
-                // Search for all artifacts in our group
-                ArtifactSearchResults results = registryClient.search()
-                        .artifacts()
-                        .get(config -> {
-                            assert config.queryParameters != null;
-                            config.queryParameters.groupId = DEFAULT_GROUP;
-                            config.queryParameters.limit = 500;
-                            config.queryParameters.offset = 0;
-                        });
-
-                assert results != null;
-                future.complete(results.getArtifacts());
-            } catch (Exception e) {
-                LOG.errorf(e, "Failed to list artifacts");
-                future.completeExceptionally(e);
-            }
-
-            return future;
-        });
+            assert results != null;
+            return results.getArtifacts();
+        } catch (Exception e) {
+            LOG.errorf(e, "Failed to list artifacts");
+            throw new ApicurioRegistryException("Failed to list artifacts", e);
+        }
     }
 
     /**
-     * Delete an artifact (for cleanup)
+     * Delete an artifact (for cleanup).
      */
-    public Uni<Boolean> deleteArtifact(String serviceName) {
+    public boolean deleteArtifact(String serviceName) {
         String artifactId = serviceName + "-config";
+        try {
+            registryClient.groups()
+                    .byGroupId(DEFAULT_GROUP)
+                    .artifacts()
+                    .byArtifactId(artifactId)
+                    .delete();
 
-        return Uni.createFrom().completionStage(() -> {
-            CompletableFuture<Boolean> future = new CompletableFuture<>();
-
-            try {
-                registryClient.groups()
-                        .byGroupId(DEFAULT_GROUP)
-                        .artifacts()
-                        .byArtifactId(artifactId)
-                        .delete();
-
-                LOG.infof("Successfully deleted artifact %s", artifactId);
-                future.complete(true);
-            } catch (Exception e) {
-                LOG.errorf(e, "Failed to delete artifact %s", artifactId);
-                future.complete(false);
-            }
-
-            return future;
-        });
+            LOG.infof("Successfully deleted artifact %s", artifactId);
+            return true;
+        } catch (Exception e) {
+            LOG.errorf(e, "Failed to delete artifact %s", artifactId);
+            return false;
+        }
     }
 
     private String versionedArtifactId(String baseName, String version) {
@@ -292,36 +261,26 @@ public class ApicurioRegistryClient {
     }
 
     /**
-     * Get artifact metadata
-     * Never returns null - returns a failed Uni if metadata cannot be retrieved.
+     * Get artifact metadata.
+     * Never returns null - throws ApicurioRegistryException if metadata cannot be retrieved.
      */
-    public Uni<ArtifactMetaData> getArtifactMetadata(String serviceName) {
+    public ArtifactMetaData getArtifactMetadata(String serviceName) {
         String artifactId = serviceName + "-config";
-
-        return Uni.createFrom().completionStage(() -> {
-            CompletableFuture<ArtifactMetaData> future = new CompletableFuture<>();
-
-            try {
-                ArtifactMetaData metadata = registryClient.groups()
-                        .byGroupId(DEFAULT_GROUP)
-                        .artifacts()
-                        .byArtifactId(artifactId)
-                        .get();
-
-                future.complete(metadata);
-            } catch (Exception e) {
-                LOG.debugf("Failed to get metadata for artifact %s: %s", artifactId, e.getMessage());
-                ApicurioRegistryException exception = new ApicurioRegistryException(
-                    String.format("Failed to get metadata for artifact %s", artifactId),
-                    serviceName,
-                    artifactId,
-                    e
-                );
-                future.completeExceptionally(exception);
-            }
-
-            return future;
-        });
+        try {
+            return registryClient.groups()
+                    .byGroupId(DEFAULT_GROUP)
+                    .artifacts()
+                    .byArtifactId(artifactId)
+                    .get();
+        } catch (Exception e) {
+            LOG.debugf("Failed to get metadata for artifact %s: %s", artifactId, e.getMessage());
+            throw new ApicurioRegistryException(
+                String.format("Failed to get metadata for artifact %s", artifactId),
+                serviceName,
+                artifactId,
+                e
+            );
+        }
     }
 
     /**

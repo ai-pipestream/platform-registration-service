@@ -1,9 +1,8 @@
 package ai.pipestream.registration.entity;
 
-import io.quarkus.hibernate.reactive.panache.Panache;
+import io.quarkus.hibernate.orm.panache.Panache;
+import io.quarkus.test.TestTransaction;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.vertx.RunOnVertxContext;
-import io.quarkus.test.vertx.UniAsserter;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -11,9 +10,15 @@ import static org.junit.jupiter.api.Assertions.*;
 @QuarkusTest
 class ConfigSchemaCrudTest {
 
+    /** Flush pending changes and detach everything, so the next read is a genuine DB round-trip. */
+    private static void flushAndClear() {
+        Panache.getEntityManager().flush();
+        Panache.getEntityManager().clear();
+    }
+
     @Test
-    @RunOnVertxContext
-    void configSchema_fullCrud_flow(UniAsserter asserter) {
+    @TestTransaction
+    void configSchema_fullCrud_flow() {
         // Create
         String json = """
         {
@@ -30,76 +35,54 @@ class ConfigSchemaCrudTest {
         schema.createdBy = "test";
         final String id = schema.schemaId;
 
-        // Persist
-        asserter.execute(() -> Panache.withTransaction(schema::persist));
+        // Persist, then force a DB-backed read
+        schema.persist();
+        flushAndClear();
 
         // Read
-        asserter.assertThat(
-                () -> Panache.withSession(() -> ConfigSchema.<ConfigSchema>findById(id)),
-                found -> {
-                    assertNotNull(found, "Expected to find schema after persist");
-                    assertEquals(id, found.schemaId);
-                    assertEquals("orders", found.serviceName);
-                    assertEquals("1.0.0", found.schemaVersion);
-                    assertNotNull(found.jsonSchema);
-                    assertTrue(found.jsonSchema.contains("\"port\""));
-                    assertTrue(found.jsonSchema.contains("\"host\""));
-                    assertEquals(ConfigSchema.SyncStatus.PENDING, found.syncStatus);
-                    assertNotNull(found.createdAt);
-                }
-        );
+        ConfigSchema found = ConfigSchema.findById(id);
+        assertNotNull(found, "Expected to find schema after persist");
+        assertEquals(id, found.schemaId);
+        assertEquals("orders", found.serviceName);
+        assertEquals("1.0.0", found.schemaVersion);
+        assertNotNull(found.jsonSchema);
+        assertTrue(found.jsonSchema.contains("\"port\""));
+        assertTrue(found.jsonSchema.contains("\"host\""));
+        assertEquals(ConfigSchema.SyncStatus.PENDING, found.syncStatus);
+        assertNotNull(found.createdAt);
 
-        // Update: mark synced
-        asserter.execute(() -> Panache.withTransaction(() ->
-                ConfigSchema.<ConfigSchema>findById(id)
-                        .invoke(s -> s.markSynced("artifact-1", 100L))
-        ));
+        // Update: mark synced, then force a DB-backed read
+        found.markSynced("artifact-1", 100L);
+        flushAndClear();
 
-        asserter.assertThat(
-                () -> Panache.withSession(() -> ConfigSchema.<ConfigSchema>findById(id)),
-                synced -> {
-                    assertEquals(ConfigSchema.SyncStatus.SYNCED, synced.syncStatus);
-                    assertEquals("artifact-1", synced.apicurioArtifactId);
-                    assertEquals(100L, synced.apicurioGlobalId);
-                    assertNotNull(synced.lastSyncAttempt);
-                    assertNull(synced.syncError);
-                }
-        );
+        ConfigSchema synced = ConfigSchema.findById(id);
+        assertEquals(ConfigSchema.SyncStatus.SYNCED, synced.syncStatus);
+        assertEquals("artifact-1", synced.apicurioArtifactId);
+        assertEquals(100L, synced.apicurioGlobalId);
+        assertNotNull(synced.lastSyncAttempt);
+        assertNull(synced.syncError);
 
-        // Update: OUT_OF_SYNC then FAILED
-        asserter.execute(() -> Panache.withTransaction(() ->
-                ConfigSchema.<ConfigSchema>findById(id)
-                        .invoke(s -> s.syncStatus = ConfigSchema.SyncStatus.OUT_OF_SYNC)
-        ));
+        // Update: OUT_OF_SYNC, then force a DB-backed read
+        synced.syncStatus = ConfigSchema.SyncStatus.OUT_OF_SYNC;
+        flushAndClear();
 
-        asserter.assertThat(
-                () -> Panache.withSession(() -> ConfigSchema.<ConfigSchema>findById(id)),
-                outOfSync -> assertEquals(ConfigSchema.SyncStatus.OUT_OF_SYNC, outOfSync.syncStatus)
-        );
+        ConfigSchema outOfSync = ConfigSchema.findById(id);
+        assertEquals(ConfigSchema.SyncStatus.OUT_OF_SYNC, outOfSync.syncStatus);
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-                ConfigSchema.<ConfigSchema>findById(id)
-                        .invoke(s -> s.markSyncFailed("network error"))
-        ));
+        // Update: FAILED, then force a DB-backed read
+        outOfSync.markSyncFailed("network error");
+        flushAndClear();
 
-        asserter.assertThat(
-                () -> Panache.withSession(() -> ConfigSchema.<ConfigSchema>findById(id)),
-                failed -> {
-                    assertEquals(ConfigSchema.SyncStatus.FAILED, failed.syncStatus);
-                    assertEquals("network error", failed.syncError);
-                    assertNotNull(failed.lastSyncAttempt);
-                }
-        );
+        ConfigSchema failed = ConfigSchema.findById(id);
+        assertEquals(ConfigSchema.SyncStatus.FAILED, failed.syncStatus);
+        assertEquals("network error", failed.syncError);
+        assertNotNull(failed.lastSyncAttempt);
 
-        // Delete
-        asserter.assertThat(
-                () -> Panache.withTransaction(() -> ConfigSchema.deleteById(id)),
-                deleted -> assertTrue(deleted)
-        );
+        // Delete, then force a DB-backed read
+        boolean deleted = ConfigSchema.deleteById(id);
+        assertTrue(deleted);
+        flushAndClear();
 
-        asserter.assertThat(
-                () -> Panache.withSession(() -> ConfigSchema.<ConfigSchema>findById(id)),
-                afterDelete -> assertNull(afterDelete)
-        );
+        assertNull(ConfigSchema.findById(id), "Entity should be gone after delete");
     }
 }

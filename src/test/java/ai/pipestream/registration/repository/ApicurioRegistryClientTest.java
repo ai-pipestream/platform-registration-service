@@ -1,7 +1,6 @@
 package ai.pipestream.registration.repository;
 
 import io.quarkus.test.junit.QuarkusTest;
-import io.smallrye.mutiny.Uni;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -58,7 +57,7 @@ class ApicurioRegistryClientTest {
         String jsonSchema = "{\"type\": \"object\"}";
 
         // Act - this should call createOrUpdateSchemaWithArtifactBase internally
-        Uni<ApicurioRegistryClient.SchemaRegistrationResponse> result =
+        ApicurioRegistryClient.SchemaRegistrationResponse result =
             client.createOrUpdateSchema(serviceName, version, jsonSchema);
 
         // Assert - verify the call was made with expected artifact ID
@@ -78,7 +77,7 @@ class ApicurioRegistryClientTest {
         String jsonSchema = "{\"type\": \"object\"}";
 
         // Act
-        Uni<ApicurioRegistryClient.SchemaRegistrationResponse> result =
+        ApicurioRegistryClient.SchemaRegistrationResponse result =
             client.createOrUpdateSchemaWithArtifactBase(artifactBase, version, jsonSchema);
 
         // Assert
@@ -97,7 +96,7 @@ class ApicurioRegistryClientTest {
         String jsonSchema = "{\"type\": \"object\"}";
 
         // Act
-        Uni<ApicurioRegistryClient.SchemaRegistrationResponse> result =
+        ApicurioRegistryClient.SchemaRegistrationResponse result =
             client.createOrUpdateSchemaWithArtifactId(artifactId, version, jsonSchema);
 
         // Assert
@@ -119,15 +118,14 @@ class ApicurioRegistryClientTest {
         private String lastJsonSchema;
 
         @Override
-        public Uni<SchemaRegistrationResponse> createOrUpdateSchemaWithArtifactId(String artifactId, String version, String jsonSchema) {
+        public SchemaRegistrationResponse createOrUpdateSchemaWithArtifactId(String artifactId, String version, String jsonSchema) {
             this.lastCalledMethod = "createOrUpdateSchemaWithArtifactId";
             this.lastArtifactId = artifactId;
             this.lastVersion = version;
             this.lastJsonSchema = jsonSchema;
 
             // Return a mock response for testing
-            SchemaRegistrationResponse response = new SchemaRegistrationResponse(artifactId, 123L, version);
-            return Uni.createFrom().item(response);
+            return new SchemaRegistrationResponse(artifactId, 123L, version);
         }
 
         // Expose the private versionedArtifactId method for testing

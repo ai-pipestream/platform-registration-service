@@ -3,13 +3,13 @@ package ai.pipestream.registration.repository;
 import ai.pipestream.registration.entity.ConfigSchema;
 import ai.pipestream.registration.entity.ServiceModule;
 import ai.pipestream.registration.entity.ServiceStatus;
-import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.hibernate.reactive.mutiny.Mutiny;
+import jakarta.transaction.Transactional;
 import org.jboss.logging.Logger;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -17,277 +17,221 @@ import java.util.Objects;
 /**
  * Repository for managing service module registrations in PostgreSQL.
  * This is the primary data store (system of record).
+ *
+ * <p>Blocking Hibernate ORM (Panache active-record) over JDBC. Write methods are
+ * {@code @Transactional}; reads run without a transaction. Callers invoke these from
+ * virtual threads, so the blocking JDBC work never pins the event loop.
  */
 @ApplicationScoped
 public class ModuleRepository {
-    
+
     private static final Logger LOG = Logger.getLogger(ModuleRepository.class);
-    
+
     @Inject
     ApicurioRegistryClient apicurioClient;
-    
-    @Inject
-    Mutiny.SessionFactory sessionFactory;
-    
+
     /**
-     * Register a new service module with optional schema  
-     * Updates existing module if it already exists
+     * Register a new service module with optional schema.
+     * Updates existing module if it already exists.
      */
-    public Uni<ServiceModule> registerModule(String serviceName, String host, int port, 
-                                            String version, Map<String, Object> metadata,
-                                            String jsonSchema) {
+    @Transactional
+    public ServiceModule registerModule(String serviceName, String host, int port,
+                                        String version, Map<String, Object> metadata,
+                                        String jsonSchema) {
         String serviceId = ServiceModule.generateServiceId(serviceName, host, port);
-        
-        return sessionFactory.withTransaction(session -> {
-            // First handle the schema if provided
-            Uni<String> schemaIdUni;
-            if (jsonSchema != null && !jsonSchema.isBlank()) {
-                String schemaId = ConfigSchema.generateSchemaId(serviceName, version);
-                schemaIdUni = session.find(ConfigSchema.class, schemaId)
-                    .flatMap(existingSchema -> {
-                        if (existingSchema != null) {
-                            return Uni.createFrom().item(existingSchema.schemaId);
-                        } else {
-                            ConfigSchema schema = ConfigSchema.create(serviceName, version, jsonSchema);
-                            return session.persist(schema).map(v -> schema.schemaId);
-                        }
-                    });
+
+        // First handle the schema if provided
+        String schemaId = null;
+        if (jsonSchema != null && !jsonSchema.isBlank()) {
+            String candidateId = ConfigSchema.generateSchemaId(serviceName, version);
+            ConfigSchema existingSchema = ConfigSchema.findById(candidateId);
+            if (existingSchema != null) {
+                schemaId = existingSchema.schemaId;
             } else {
-                schemaIdUni = Uni.createFrom().nullItem();
+                ConfigSchema schema = ConfigSchema.create(serviceName, version, jsonSchema);
+                schema.persist();
+                schemaId = schema.schemaId;
             }
-            
-            // Then handle the module
-            return schemaIdUni.flatMap(schemaId -> 
-                session.find(ServiceModule.class, serviceId)
-                    .flatMap(existingModule -> {
-                        ServiceModule module;
-                        if (existingModule != null) {
-                            // Check if anything has actually changed
-                            boolean hasChanges = false;
-                            module = existingModule;
-                            
-                            if (!Objects.equals(module.version, version)) {
-                                module.version = version;
-                                hasChanges = true;
-                            }
-                            if (!Objects.equals(module.metadata, metadata)) {
-                                module.metadata = metadata;
-                                hasChanges = true;
-                            }
-                            if (!Objects.equals(module.configSchemaId, schemaId)) {
-                                module.configSchemaId = schemaId;
-                                hasChanges = true;
-                            }
-                            
-                            // Always update heartbeat and status
-                            module.updateHeartbeat();
-                            module.status = ServiceStatus.ACTIVE;
-                            
-                            if (hasChanges) {
-                                LOG.infof("Updating existing module registration for %s", serviceId);
-                                return session.merge(module);
-                            } else {
-                                LOG.debugf("Module %s unchanged, only updating heartbeat", serviceId);
-                                // Just update heartbeat - minimal update
-                                return session.merge(module);
-                            }
-                        } else {
-                            // Create new module
-                            module = ServiceModule.create(serviceName, host, port);
-                            module.version = version;
-                            module.metadata = metadata;
-                            module.configSchemaId = schemaId;
-                            LOG.infof("Creating new module registration for %s", serviceId);
-                            return session.persist(module).map(v -> module);
-                        }
-                    })
-            );
-        });
-    }
-    
-    /**
-     * Save a configuration schema (dual storage: PostgreSQL + Apicurio)
-     */
-    public Uni<ConfigSchema> saveSchema(String serviceName, String version, String jsonSchema) {
-        ConfigSchema schema = ConfigSchema.create(serviceName, version, jsonSchema);
-        
-        return sessionFactory.withTransaction(session -> 
-            session.persist(schema)
-                .flatMap(v -> {
-                    // Try to sync to Apicurio (best effort)
-                    return syncSchemaToApicurio(schema)
-                        .onFailure().invoke(error -> {
-                            LOG.warnf("Failed to sync schema to Apicurio: %s", error.getMessage());
-                            schema.markSyncFailed(error.getMessage());
-                        })
-                        .replaceWith(schema);
-                })
-        );
-    }
-    
-    /**
-     * Sync schema to Apicurio Registry
-     */
-    private Uni<ConfigSchema> syncSchemaToApicurio(ConfigSchema schema) {
-        return apicurioClient.createOrUpdateSchema(
-                schema.serviceName,
-                schema.schemaVersion,
-                schema.jsonSchema  // Already a String now
-            )
-            .map(response -> {
-                schema.markSynced(response.getArtifactId(), response.getGlobalId());
-                return schema;
-            });
-    }
-    
-    /**
-     * Update heartbeat for a service
-     */
-    public Uni<ServiceModule> updateHeartbeat(String serviceId) {
-        return sessionFactory.withTransaction(session ->
-            session.find(ServiceModule.class, serviceId)
-                .onItem().ifNotNull().invoke(module -> {
-                    module.updateHeartbeat();
-                    module.status = ServiceStatus.ACTIVE;
-                })
-        );
-    }
-    
-    /**
-     * Mark service as unhealthy
-     */
-    public Uni<ServiceModule> markUnhealthy(String serviceId) {
-        return sessionFactory.withTransaction(session ->
-            session.find(ServiceModule.class, serviceId)
-                .onItem().ifNotNull().invoke(module -> {
-                    module.status = ServiceStatus.UNHEALTHY;
-                })
-        );
-    }
-    
-    /**
-     * Unregister a service
-     */
-    public Uni<Boolean> unregisterModule(String serviceId) {
-        return sessionFactory.withTransaction(session ->
-            session.find(ServiceModule.class, serviceId)
-                .onItem().ifNotNull().transformToUni(module -> 
-                    session.remove(module).map(v -> true)
-                )
-                .onItem().ifNull().continueWith(false)
-        );
-    }
-    
-    /**
-     * Get all active services
-     */
-    public Uni<List<ServiceModule>> getActiveServices() {
-        return sessionFactory.withSession(session ->
-            session.createQuery("FROM ServiceModule WHERE status = :status", ServiceModule.class)
-                .setParameter("status", ServiceStatus.ACTIVE)
-                .getResultList()
-        );
-    }
-    
-    /**
-     * Get all services (for admin dashboard)
-     */
-    public Uni<List<ServiceModule>> getAllServices() {
-        return sessionFactory.withSession(session ->
-            session.createQuery("FROM ServiceModule", ServiceModule.class)
-                .getResultList()
-        );
-    }
-    
-    /**
-     * Find stale services (no heartbeat for > 30 seconds)
-     */
-    public Uni<List<ServiceModule>> findStaleServices() {
-        LocalDateTime threshold = LocalDateTime.now().minusSeconds(30);
-        return sessionFactory.withSession(session ->
-            session.createQuery(
-                "FROM ServiceModule WHERE status = :status AND lastHeartbeat < :threshold",
-                ServiceModule.class
-            )
-            .setParameter("status", ServiceStatus.ACTIVE)
-            .setParameter("threshold", threshold)
-            .getResultList()
-        );
-    }
-    
-    /**
-     * Get service by ID
-     */
-    public Uni<ServiceModule> findById(String serviceId) {
-        return sessionFactory.withSession(session ->
-            session.find(ServiceModule.class, serviceId)
-        );
-    }
-    
-    /**
-     * Get schema by ID
-     */
-    public Uni<ConfigSchema> findSchemaById(String schemaId) {
-        return sessionFactory.withSession(session ->
-            session.find(ConfigSchema.class, schemaId)
-        );
-    }
-    
-    /**
-     * Get latest schema for a service (most recently created)
-     */
-    public Uni<ConfigSchema> findLatestSchemaByServiceName(String serviceName) {
-        return sessionFactory.withSession(session ->
-            session.createQuery(
-                "FROM ConfigSchema WHERE serviceName = :serviceName ORDER BY createdAt DESC",
-                ConfigSchema.class
-            )
-            .setParameter("serviceName", serviceName)
-            .setMaxResults(1)
-            .getSingleResultOrNull()
-        );
-    }
-    
-    /**
-     * Get all schema versions for a service name, ordered by version descending
-     */
-    public Uni<List<ConfigSchema>> findSchemaVersionsByServiceName(String serviceName) {
-        return sessionFactory.withSession(session ->
-            session.createQuery(
-                "FROM ConfigSchema WHERE serviceName = :serviceName ORDER BY schemaVersion DESC",
-                ConfigSchema.class
-            )
-            .setParameter("serviceName", serviceName)
-            .getResultList()
-        );
+        }
+
+        // Then handle the module
+        ServiceModule existingModule = ServiceModule.findById(serviceId);
+        if (existingModule != null) {
+            boolean hasChanges = false;
+
+            if (!Objects.equals(existingModule.version, version)) {
+                existingModule.version = version;
+                hasChanges = true;
+            }
+            if (!Objects.equals(existingModule.metadata, metadata)) {
+                existingModule.metadata = metadata;
+                hasChanges = true;
+            }
+            if (!Objects.equals(existingModule.configSchemaId, schemaId)) {
+                existingModule.configSchemaId = schemaId;
+                hasChanges = true;
+            }
+
+            // Always update heartbeat and status
+            existingModule.updateHeartbeat();
+            existingModule.status = ServiceStatus.ACTIVE;
+
+            if (hasChanges) {
+                LOG.infof("Updating existing module registration for %s", serviceId);
+            } else {
+                LOG.debugf("Module %s unchanged, only updating heartbeat", serviceId);
+            }
+            // Managed entity — dirty changes flush on transaction commit.
+            return existingModule;
+        }
+
+        // Create new module
+        ServiceModule module = ServiceModule.create(serviceName, host, port);
+        module.version = version;
+        module.metadata = metadata;
+        module.configSchemaId = schemaId;
+        LOG.infof("Creating new module registration for %s", serviceId);
+        module.persist();
+        return module;
     }
 
     /**
-     * Get all schemas needing sync to Apicurio
+     * Save a configuration schema (dual storage: PostgreSQL + Apicurio).
      */
-    public Uni<List<ConfigSchema>> findSchemasNeedingSync() {
-        return sessionFactory.withSession(session ->
-            session.createQuery(
-                "FROM ConfigSchema WHERE syncStatus IN ('PENDING', 'FAILED', 'OUT_OF_SYNC')",
-                ConfigSchema.class
-            ).getResultList()
-        );
+    @Transactional
+    public ConfigSchema saveSchema(String serviceName, String version, String jsonSchema) {
+        ConfigSchema schema = ConfigSchema.create(serviceName, version, jsonSchema);
+        schema.persist();
+
+        // Try to sync to Apicurio (best effort)
+        try {
+            syncSchemaToApicurio(schema);
+        } catch (Exception error) {
+            LOG.warnf("Failed to sync schema to Apicurio: %s", error.getMessage());
+            schema.markSyncFailed(error.getMessage());
+        }
+        return schema;
     }
-    
+
     /**
-     * Count registered services by status
+     * Sync schema to Apicurio Registry.
      */
-    public Uni<Map<ServiceStatus, Long>> countServicesByStatus() {
-        return sessionFactory.withSession(session -> {
-            Map<ServiceStatus, Long> counts = new java.util.HashMap<>();
-            return session.createQuery("FROM ServiceModule", ServiceModule.class)
-                .getResultList()
-                .map(services -> {
-                    for (ServiceModule service : services) {
-                        counts.merge(service.status, 1L, Long::sum);
-                    }
-                    return counts;
-                });
-        });
+    private void syncSchemaToApicurio(ConfigSchema schema) {
+        ApicurioRegistryClient.SchemaRegistrationResponse response = apicurioClient.createOrUpdateSchema(
+                schema.serviceName,
+                schema.schemaVersion,
+                schema.jsonSchema  // Already a String now
+        );
+        schema.markSynced(response.getArtifactId(), response.getGlobalId());
+    }
+
+    /**
+     * Update heartbeat for a service.
+     */
+    @Transactional
+    public ServiceModule updateHeartbeat(String serviceId) {
+        ServiceModule module = ServiceModule.findById(serviceId);
+        if (module != null) {
+            module.updateHeartbeat();
+            module.status = ServiceStatus.ACTIVE;
+        }
+        return module;
+    }
+
+    /**
+     * Mark service as unhealthy.
+     */
+    @Transactional
+    public ServiceModule markUnhealthy(String serviceId) {
+        ServiceModule module = ServiceModule.findById(serviceId);
+        if (module != null) {
+            module.status = ServiceStatus.UNHEALTHY;
+        }
+        return module;
+    }
+
+    /**
+     * Unregister a service.
+     */
+    @Transactional
+    public boolean unregisterModule(String serviceId) {
+        ServiceModule module = ServiceModule.findById(serviceId);
+        if (module != null) {
+            module.delete();
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Get all active services.
+     */
+    public List<ServiceModule> getActiveServices() {
+        return ServiceModule.list("status", ServiceStatus.ACTIVE);
+    }
+
+    /**
+     * Get all services (for admin dashboard).
+     */
+    public List<ServiceModule> getAllServices() {
+        return ServiceModule.listAll();
+    }
+
+    /**
+     * Find stale services (no heartbeat for > 30 seconds).
+     */
+    public List<ServiceModule> findStaleServices() {
+        LocalDateTime threshold = LocalDateTime.now().minusSeconds(30);
+        return ServiceModule.list("status = ?1 and lastHeartbeat < ?2", ServiceStatus.ACTIVE, threshold);
+    }
+
+    /**
+     * Get service by ID.
+     */
+    public ServiceModule findById(String serviceId) {
+        return ServiceModule.findById(serviceId);
+    }
+
+    /**
+     * Get schema by ID.
+     */
+    public ConfigSchema findSchemaById(String schemaId) {
+        return ConfigSchema.findById(schemaId);
+    }
+
+    /**
+     * Get latest schema for a service (most recently created).
+     */
+    public ConfigSchema findLatestSchemaByServiceName(String serviceName) {
+        return ConfigSchema.find("serviceName = ?1 ORDER BY createdAt DESC", serviceName).firstResult();
+    }
+
+    /**
+     * Get all schema versions for a service name, ordered by version descending.
+     */
+    public List<ConfigSchema> findSchemaVersionsByServiceName(String serviceName) {
+        return ConfigSchema.list("serviceName = ?1 ORDER BY schemaVersion DESC", serviceName);
+    }
+
+    /**
+     * Get all schemas needing sync to Apicurio.
+     */
+    public List<ConfigSchema> findSchemasNeedingSync() {
+        return ConfigSchema.list("syncStatus in ?1",
+                List.of(ConfigSchema.SyncStatus.PENDING,
+                        ConfigSchema.SyncStatus.FAILED,
+                        ConfigSchema.SyncStatus.OUT_OF_SYNC));
+    }
+
+    /**
+     * Count registered services by status.
+     */
+    public Map<ServiceStatus, Long> countServicesByStatus() {
+        Map<ServiceStatus, Long> counts = new HashMap<>();
+        List<ServiceModule> services = ServiceModule.listAll();
+        for (ServiceModule service : services) {
+            counts.merge(service.status, 1L, Long::sum);
+        }
+        return counts;
     }
 }
