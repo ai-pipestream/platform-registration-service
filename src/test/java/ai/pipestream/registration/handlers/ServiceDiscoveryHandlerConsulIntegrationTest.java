@@ -7,13 +7,13 @@ import ai.pipestream.platform.registration.v1.ResolveServiceResponse;
 import ai.pipestream.test.support.ConsulTestResource;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
-import io.vertx.mutiny.ext.consul.ConsulClient;
+import io.vertx.ext.consul.ConsulClient;
 import io.vertx.ext.consul.ServiceOptions;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -31,10 +31,10 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
     ServiceDiscoveryHandler serviceDiscoveryHandler;
 
     @Inject
-    ConsulClient consulClient;  // Real client, NOT mocked!
+    ConsulClient consulClient;
 
     @Test
-    void resolveService_withHttpEndpointsInRealConsul_returnsEndpoints() {
+    void resolveService_withHttpEndpointsInRealConsul_returnsEndpoints() throws Exception {
         // Arrange - Create a unique service name to avoid conflicts
         String serviceName = "test-consul-http-service-" + UUID.randomUUID().toString().substring(0, 8);
         String serviceId = serviceName + "-id";
@@ -65,7 +65,9 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
                 .setMeta(metadata);
 
         consulClient.registerService(serviceOptions)
-            .await().atMost(Duration.ofSeconds(10));
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(10, TimeUnit.SECONDS);
 
         // Act - Resolve the service
         ResolveServiceRequest request = ResolveServiceRequest.newBuilder()
@@ -105,11 +107,13 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
 
         // Cleanup - deregister the service
         consulClient.deregisterService(serviceId)
-            .await().atMost(Duration.ofSeconds(5));
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS);
     }
 
     @Test
-    void resolveService_withoutHttpEndpointsInRealConsul_returnsEmpty() {
+    void resolveService_withoutHttpEndpointsInRealConsul_returnsEmpty() throws Exception {
         // Arrange - Register a service without HTTP endpoints
         String serviceName = "test-consul-no-http-service-" + UUID.randomUUID().toString().substring(0, 8);
         String serviceId = serviceName + "-id";
@@ -122,7 +126,9 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
                 // No HTTP metadata
 
         consulClient.registerService(serviceOptions)
-            .await().atMost(Duration.ofSeconds(10));
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(10, TimeUnit.SECONDS);
 
         // Act
         ResolveServiceRequest request = ResolveServiceRequest.newBuilder()
@@ -140,11 +146,13 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
 
         // Cleanup
         consulClient.deregisterService(serviceId)
-            .await().atMost(Duration.ofSeconds(5));
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS);
     }
 
     @Test
-    void listServices_withHttpEndpointsInRealConsul_includesEndpoints() {
+    void listServices_withHttpEndpointsInRealConsul_includesEndpoints() throws Exception {
         // Arrange - Register a service with HTTP endpoints
         String serviceName = "test-consul-list-service-" + UUID.randomUUID().toString().substring(0, 8);
         String serviceId = serviceName + "-id";
@@ -166,7 +174,9 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
                 .setMeta(metadata);
 
         consulClient.registerService(serviceOptions)
-            .await().atMost(Duration.ofSeconds(10));
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(10, TimeUnit.SECONDS);
 
         // Act - List all services
         var listResponse = serviceDiscoveryHandler.listServices();
@@ -191,6 +201,8 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
 
         // Cleanup
         consulClient.deregisterService(serviceId)
-            .await().atMost(Duration.ofSeconds(5));
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(5, TimeUnit.SECONDS);
     }
 }

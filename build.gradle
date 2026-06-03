@@ -53,10 +53,6 @@ dependencies {
     // Quarkus auto-resolves the deployment module via extension metadata
     implementation 'ai.pipestream:pipestream-service-registration'
 
-    // Consul integration
-    // Vert.x Consul client is async-only; ServiceDiscoveryHandler/health check consume it
-    // by bridging its Uni results to blocking on the virtual thread (.await().indefinitely()).
-    implementation 'io.smallrye.reactive:smallrye-mutiny-vertx-consul-client'
     implementation 'io.smallrye.stork:stork-service-discovery-consul'
 
     // Quarkus Apicurio Registry Protobuf Extension (Zero-Config)

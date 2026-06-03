@@ -5,10 +5,10 @@ import ai.pipestream.platform.registration.v1.HttpEndpoint;
 import ai.pipestream.platform.registration.v1.RegisterRequest;
 import ai.pipestream.platform.registration.v1.ServiceType;
 import ai.pipestream.registration.consul.ConsulRegistrar;
-import io.smallrye.mutiny.Uni;
+import io.vertx.core.Future;
 import io.vertx.ext.consul.CheckOptions;
+import io.vertx.ext.consul.ConsulClient;
 import io.vertx.ext.consul.ServiceOptions;
-import io.vertx.mutiny.ext.consul.ConsulClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -62,10 +62,10 @@ class ConsulRegistrarTest {
                 .build();
 
         when(consulClient.registerService(any(ServiceOptions.class)))
-                .thenReturn(Uni.createFrom().voidItem());
+                .thenReturn(Future.succeededFuture());
 
         // Act
-        consulRegistrar.registerService(request, serviceId).await().indefinitely();
+        assertTrue(consulRegistrar.registerService(request, serviceId));
 
         // Assert
         ArgumentCaptor<ServiceOptions> optionsCaptor = ArgumentCaptor.forClass(ServiceOptions.class);
@@ -108,9 +108,9 @@ class ConsulRegistrarTest {
                 .build();
 
         when(consulClient.registerService(any(ServiceOptions.class)))
-                .thenReturn(Uni.createFrom().voidItem());
+                .thenReturn(Future.succeededFuture());
 
-        consulRegistrar.registerService(request, serviceId).await().indefinitely();
+        assertTrue(consulRegistrar.registerService(request, serviceId));
 
         ArgumentCaptor<ServiceOptions> optionsCaptor = ArgumentCaptor.forClass(ServiceOptions.class);
         verify(consulClient).registerService(optionsCaptor.capture());
@@ -145,9 +145,9 @@ class ConsulRegistrarTest {
                 .build();
 
         when(consulClient.registerService(any(ServiceOptions.class)))
-                .thenReturn(Uni.createFrom().voidItem());
+                .thenReturn(Future.succeededFuture());
 
-        consulRegistrar.registerService(request, serviceId).await().indefinitely();
+        assertTrue(consulRegistrar.registerService(request, serviceId));
 
         ArgumentCaptor<ServiceOptions> optionsCaptor = ArgumentCaptor.forClass(ServiceOptions.class);
         verify(consulClient).registerService(optionsCaptor.capture());
@@ -182,9 +182,9 @@ class ConsulRegistrarTest {
                 .build();
 
         when(consulClient.registerService(any(ServiceOptions.class)))
-                .thenReturn(Uni.createFrom().voidItem());
+                .thenReturn(Future.succeededFuture());
 
-        consulRegistrar.registerService(request, serviceId).await().indefinitely();
+        assertTrue(consulRegistrar.registerService(request, serviceId));
 
         ArgumentCaptor<ServiceOptions> optionsCaptor = ArgumentCaptor.forClass(ServiceOptions.class);
         verify(consulClient).registerService(optionsCaptor.capture());
