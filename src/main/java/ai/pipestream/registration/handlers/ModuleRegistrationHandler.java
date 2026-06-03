@@ -23,9 +23,8 @@ import java.util.function.Consumer;
  * Handles module registration operations.
  *
  * <p>Blocking — registration streams {@link RegistrationEvent}s to the supplied sink as each
- * step completes (validate → Consul → health → Apicurio → database → OpenSearch). The external
- * Consul APIs are Mutiny-only and bridged with {@link UniBlocking}; everything else runs as
- * straight-line blocking code on the caller's virtual thread.
+ * step completes (validate → Consul → health → Apicurio → database → OpenSearch) on the
+ * caller's virtual thread.
  */
 @ApplicationScoped
 public class ModuleRegistrationHandler {
@@ -82,7 +81,7 @@ public class ModuleRegistrationHandler {
             sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting module registration", serviceId));
             sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Module registration request validated", null));
 
-            boolean consulSuccess = UniBlocking.await(consulRegistrar.registerService(request, serviceId));
+            boolean consulSuccess = consulRegistrar.registerService(request, serviceId);
             if (!consulSuccess) {
                 sink.accept(createEventWithError(serviceId, "Failed to register with Consul", "Consul registration failed"));
                 return;
@@ -91,7 +90,7 @@ public class ModuleRegistrationHandler {
             sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_REGISTERED, "Module registered with Consul", serviceId));
             sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
 
-            boolean healthy = UniBlocking.await(healthChecker.waitForHealthy(moduleName, serviceId));
+            boolean healthy = healthChecker.waitForHealthy(moduleName, serviceId);
             if (!healthy) {
                 rollbackConsulRegistration(serviceId);
                 sink.accept(createEventWithError(serviceId, "Module failed health checks",
@@ -179,7 +178,7 @@ public class ModuleRegistrationHandler {
     public UnregisterResponse unregisterModule(UnregisterRequest request) {
         String serviceId = ConsulRegistrar.generateServiceId(request.getName(), request.getHost(), request.getPort());
 
-        boolean success = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
+        boolean success = consulRegistrar.unregisterService(serviceId);
 
         UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
             .setSuccess(success)
@@ -199,7 +198,7 @@ public class ModuleRegistrationHandler {
         // Matches the original reactive flow: a thrown exception propagates to registerModule's
         // handler (→ generic "Registration failed"), while a false result is only logged and the
         // caller continues to emit the accurate "Module failed health checks" event.
-        boolean success = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
+        boolean success = consulRegistrar.unregisterService(serviceId);
         if (success) {
             LOG.infof("Rolled back Consul registration for %s", serviceId);
         } else {

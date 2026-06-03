@@ -16,8 +16,7 @@ import java.util.function.Consumer;
  * Handles service registration operations.
  *
  * <p>Blocking — registration streams {@link RegistrationEvent}s to the supplied sink as each
- * step completes. The external Consul APIs are Mutiny-only, so their {@code Uni} results are
- * bridged to blocking with {@code .await().indefinitely()} on the caller's virtual thread.
+ * step completes on the caller's virtual thread.
  */
 @ApplicationScoped
 public class ServiceRegistrationHandler {
@@ -63,7 +62,7 @@ public class ServiceRegistrationHandler {
             sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Service registration request validated", null));
 
             // Register with Consul
-            boolean consulSuccess = UniBlocking.await(consulRegistrar.registerService(request, serviceId));
+            boolean consulSuccess = consulRegistrar.registerService(request, serviceId);
             if (!consulSuccess) {
                 sink.accept(createEventWithError(serviceId, "Failed to register with Consul", "Consul registration returned false"));
                 return;
@@ -73,7 +72,7 @@ public class ServiceRegistrationHandler {
             sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
 
             // Wait for health check
-            boolean healthy = UniBlocking.await(healthChecker.waitForHealthy(request.getName(), serviceId));
+            boolean healthy = healthChecker.waitForHealthy(request.getName(), serviceId);
             if (!healthy) {
                 // Service registered but never became healthy
                 sink.accept(createEventWithError(serviceId, "Service registered but failed health checks",
@@ -81,7 +80,7 @@ public class ServiceRegistrationHandler {
 
                 // Cleanup - unregister from Consul (best effort)
                 try {
-                    boolean cleaned = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
+                    boolean cleaned = consulRegistrar.unregisterService(serviceId);
                     if (cleaned) {
                         LOG.debugf("Cleaned up unhealthy service registration: %s", serviceId);
                     } else {
@@ -130,7 +129,7 @@ public class ServiceRegistrationHandler {
     public UnregisterResponse unregisterService(UnregisterRequest request) {
         String serviceId = ConsulRegistrar.generateServiceId(request.getName(), request.getHost(), request.getPort());
 
-        boolean success = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
+        boolean success = consulRegistrar.unregisterService(serviceId);
 
         UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
             .setSuccess(success)
