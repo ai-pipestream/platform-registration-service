@@ -4,6 +4,7 @@ import ai.pipestream.platform.registration.v1.Connectivity;
 import ai.pipestream.platform.registration.v1.HttpEndpoint;
 import ai.pipestream.platform.registration.v1.PlatformEventType;
 import ai.pipestream.platform.registration.v1.RegisterRequest;
+import ai.pipestream.platform.registration.v1.RegistrationEvent;
 import ai.pipestream.platform.registration.v1.ServiceType;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
 import ai.pipestream.registration.test.support.WireMockContainerTestResource;
@@ -19,6 +20,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -100,10 +103,9 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
                 .build())
             .build();
 
-        // Act - Register the service and wait for completion
-        var registrationEvents = serviceRegistrationHandler.registerService(request)
-            .collect().asList()
-            .await().atMost(Duration.ofSeconds(30));
+        // Act - Register the service and collect the streamed events
+        List<RegistrationEvent> registrationEvents = new ArrayList<>();
+        serviceRegistrationHandler.registerService(request, registrationEvents::add);
 
         // Assert - Service should be registered successfully
         assertThat("Registration should complete", registrationEvents.size(), is(greaterThan(0)));
@@ -117,8 +119,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
 
         // Verify the HTTP schema was registered in Apicurio
         String expectedArtifactId = serviceName + "-http-config";
-        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version)
-            .await().atMost(Duration.ofSeconds(10));
+        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version);
 
         assertThat("HTTP schema should be retrievable from Apicurio",
             retrievedSchema, is(notNullValue()));
@@ -153,10 +154,9 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
                 .build())
             .build();
 
-        // Act - Register the service and wait for completion
-        var registrationEvents = serviceRegistrationHandler.registerService(request)
-            .collect().asList()
-            .await().atMost(Duration.ofSeconds(30));
+        // Act - Register the service and collect the streamed events
+        List<RegistrationEvent> registrationEvents = new ArrayList<>();
+        serviceRegistrationHandler.registerService(request, registrationEvents::add);
 
         // Assert
         assertThat("Registration should complete", registrationEvents.size(), is(greaterThan(0)));
@@ -166,8 +166,7 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
 
         // Verify the HTTP schema was registered with default artifact ID
         String expectedArtifactId = serviceName + "-http-config";
-        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version)
-            .await().atMost(Duration.ofSeconds(10));
+        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, version);
 
         assertThat("HTTP schema should be retrievable with default artifact ID",
             retrievedSchema, is(notNullValue()));
@@ -204,17 +203,18 @@ class ServiceRegistrationHandlerHttpIntegrationTest {
             .build();
 
         // Act
-        var registrationResult = serviceRegistrationHandler.registerService(request)
-            .collect().last()
-            .await().atMost(Duration.ofSeconds(30));
+        List<RegistrationEvent> registrationEvents = new ArrayList<>();
+        serviceRegistrationHandler.registerService(request, registrationEvents::add);
+        var registrationResult = registrationEvents.isEmpty()
+            ? null
+            : registrationEvents.get(registrationEvents.size() - 1);
 
         // Assert
         assertThat("Registration should succeed", registrationResult, is(notNullValue()));
 
         // Verify schema registered with service version
         String expectedArtifactId = serviceName + "-openapi-config";
-        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, serviceVersion)
-            .await().atMost(Duration.ofSeconds(10));
+        String retrievedSchema = apicurioClient.getSchemaByArtifactId(expectedArtifactId, serviceVersion);
 
         assertThat("HTTP schema should use service version",
             retrievedSchema, is(notNullValue()));

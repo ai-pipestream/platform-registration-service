@@ -13,16 +13,18 @@ import com.google.protobuf.Timestamp;
 import io.apicurio.registry.rest.client.models.ArtifactMetaData;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 
 /**
  * Retrieves module configuration schemas from the platform registry (DB, then Apicurio).
+ *
+ * <p>Blocking — invoked from virtual threads by the gRPC/REST layers.
  */
 @ApplicationScoped
 public class SchemaRetrievalHandler {
@@ -35,7 +37,7 @@ public class SchemaRetrievalHandler {
     @Inject
     ModuleRepository moduleRepository;
 
-    public Uni<GetModuleSchemaResponse> getModuleSchema(GetModuleSchemaRequest request) {
+    public GetModuleSchemaResponse getModuleSchema(GetModuleSchemaRequest request) {
         String serviceName = request.getModuleName();
         String version = request.hasVersion() && !request.getVersion().isEmpty()
             ? request.getVersion()
@@ -44,30 +46,29 @@ public class SchemaRetrievalHandler {
         LOG.infof("Retrieving schema for module: %s, version: %s",
             serviceName, version != null ? version : "latest");
 
-        return getSchemaFromDatabase(serviceName, version)
-            .onItem().ifNotNull().transformToUni(this::buildResponseFromDatabase)
-            .onItem().ifNull().switchTo(() -> {
-                LOG.debugf("Schema not found in database for %s:%s, trying Apicurio",
-                    serviceName, version);
-                return getSchemaFromApicurio(serviceName, version);
-            })
-            .onFailure().transform(error -> {
-                if (error instanceof StatusRuntimeException) {
-                    return error;
-                }
-                if (error instanceof ApicurioRegistryException) {
-                    return new StatusRuntimeException(
-                            Status.NOT_FOUND.withDescription(
-                                    "Module schema not found: " + serviceName).withCause(error));
-                }
-                LOG.errorf(error, "Unexpected error retrieving schema for %s:%s", serviceName, version);
-                return new StatusRuntimeException(
-                        Status.INTERNAL.withDescription(
-                                "Failed to retrieve schema for " + serviceName).withCause(error));
-            });
+        try {
+            ConfigSchema dbSchema = getSchemaFromDatabase(serviceName, version);
+            if (dbSchema != null) {
+                return buildResponseFromDatabase(dbSchema);
+            }
+            LOG.debugf("Schema not found in database for %s:%s, trying Apicurio",
+                serviceName, version);
+            return getSchemaFromApicurio(serviceName, version);
+        } catch (StatusRuntimeException error) {
+            throw error;
+        } catch (ApicurioRegistryException error) {
+            throw new StatusRuntimeException(
+                    Status.NOT_FOUND.withDescription(
+                            "Module schema not found: " + serviceName).withCause(error));
+        } catch (Exception error) {
+            LOG.errorf(error, "Unexpected error retrieving schema for %s:%s", serviceName, version);
+            throw new StatusRuntimeException(
+                    Status.INTERNAL.withDescription(
+                            "Failed to retrieve schema for " + serviceName).withCause(error));
+        }
     }
 
-    private Uni<ConfigSchema> getSchemaFromDatabase(String serviceName, String version) {
+    private ConfigSchema getSchemaFromDatabase(String serviceName, String version) {
         if (version == null) {
             return moduleRepository.findLatestSchemaByServiceName(serviceName);
         }
@@ -75,7 +76,7 @@ public class SchemaRetrievalHandler {
         return moduleRepository.findSchemaById(schemaId);
     }
 
-    private Uni<GetModuleSchemaResponse> buildResponseFromDatabase(ConfigSchema schema) {
+    private GetModuleSchemaResponse buildResponseFromDatabase(ConfigSchema schema) {
         GetModuleSchemaResponse.Builder builder = GetModuleSchemaResponse.newBuilder()
             .setModuleName(schema.serviceName)
             .setSchemaJson(schema.jsonSchema)
@@ -99,33 +100,37 @@ public class SchemaRetrievalHandler {
                 .build());
         }
 
-        return Uni.createFrom().item(builder.build());
+        return builder.build();
     }
 
-    private Uni<GetModuleSchemaResponse> getSchemaFromApicurio(String serviceName, String version) {
+    private GetModuleSchemaResponse getSchemaFromApicurio(String serviceName, String version) {
         String versionToFetch = version != null ? version : "latest";
 
-        return apicurioClient.getSchema(serviceName, versionToFetch)
-            .flatMap(schemaContent -> apicurioClient.getArtifactMetadata(serviceName)
-                    .map(metadata -> buildResponseFromApicurio(
-                            serviceName, schemaContent, versionToFetch, metadata))
-                    .onFailure(ApicurioRegistryException.class).recoverWithItem(error -> {
-                        LOG.debugf(error, "Failed to get metadata for %s, using schema without metadata", serviceName);
-                        return buildResponseFromApicurio(serviceName, schemaContent, versionToFetch, null);
-                    }))
-            .onFailure().transform(failure -> {
-                if (failure instanceof ApicurioRegistryException) {
-                    return new StatusRuntimeException(
-                            Status.NOT_FOUND.withDescription(
-                                    "Module schema not found: " + serviceName).withCause(failure));
-                }
-                return new ApicurioRegistryException(
-                    String.format("Failed to get schema from Apicurio for %s", serviceName),
-                    serviceName,
-                    null,
-                    failure
-                );
-            });
+        String schemaContent;
+        try {
+            schemaContent = apicurioClient.getSchema(serviceName, versionToFetch);
+        } catch (ApicurioRegistryException failure) {
+            throw new StatusRuntimeException(
+                    Status.NOT_FOUND.withDescription(
+                            "Module schema not found: " + serviceName).withCause(failure));
+        } catch (Exception failure) {
+            throw new ApicurioRegistryException(
+                String.format("Failed to get schema from Apicurio for %s", serviceName),
+                serviceName,
+                null,
+                failure
+            );
+        }
+
+        ArtifactMetaData metadata;
+        try {
+            metadata = apicurioClient.getArtifactMetadata(serviceName);
+        } catch (ApicurioRegistryException error) {
+            LOG.debugf(error, "Failed to get metadata for %s, using schema without metadata", serviceName);
+            metadata = null;
+        }
+
+        return buildResponseFromApicurio(serviceName, schemaContent, versionToFetch, metadata);
     }
 
     private GetModuleSchemaResponse buildResponseFromApicurio(
@@ -166,56 +171,51 @@ public class SchemaRetrievalHandler {
         return builder.build();
     }
 
-    public Uni<GetModuleSchemaVersionsResponse> getModuleSchemaVersions(GetModuleSchemaVersionsRequest request) {
+    public GetModuleSchemaVersionsResponse getModuleSchemaVersions(GetModuleSchemaVersionsRequest request) {
         String serviceName = request.getModuleName();
 
         LOG.infof("Retrieving schema versions for module: %s", serviceName);
 
-        return moduleRepository.findSchemaVersionsByServiceName(serviceName)
-            .map(schemas -> {
-                GetModuleSchemaVersionsResponse.Builder builder = GetModuleSchemaVersionsResponse.newBuilder()
-                    .setModuleName(serviceName);
+        List<ConfigSchema> schemas = moduleRepository.findSchemaVersionsByServiceName(serviceName);
 
-                String latestVersion = null;
-                String artifactId = null;
-                for (ConfigSchema schema : schemas) {
-                    ModuleSchemaVersion.Builder versionBuilder = ModuleSchemaVersion.newBuilder()
-                        .setVersion(schema.schemaVersion);
+        GetModuleSchemaVersionsResponse.Builder builder = GetModuleSchemaVersionsResponse.newBuilder()
+            .setModuleName(serviceName);
 
-                    if (schema.createdAt != null) {
-                        Instant instant = schema.createdAt.toInstant(ZoneOffset.UTC);
-                        versionBuilder.setCreatedAt(Timestamp.newBuilder()
-                            .setSeconds(instant.getEpochSecond())
-                            .setNanos(instant.getNano())
-                            .build());
-                    }
+        String latestVersion = null;
+        String artifactId = null;
+        for (ConfigSchema schema : schemas) {
+            ModuleSchemaVersion.Builder versionBuilder = ModuleSchemaVersion.newBuilder()
+                .setVersion(schema.schemaVersion);
 
-                    if (schema.createdBy != null) {
-                        versionBuilder.putMetadata("created_by", schema.createdBy);
-                    }
+            if (schema.createdAt != null) {
+                Instant instant = schema.createdAt.toInstant(ZoneOffset.UTC);
+                versionBuilder.setCreatedAt(Timestamp.newBuilder()
+                    .setSeconds(instant.getEpochSecond())
+                    .setNanos(instant.getNano())
+                    .build());
+            }
 
-                    builder.addVersions(versionBuilder.build());
+            if (schema.createdBy != null) {
+                versionBuilder.putMetadata("created_by", schema.createdBy);
+            }
 
-                    if (latestVersion == null || schema.schemaVersion.compareTo(latestVersion) > 0) {
-                        latestVersion = schema.schemaVersion;
-                    }
-                    if (schema.apicurioArtifactId != null) {
-                        artifactId = schema.apicurioArtifactId;
-                    }
-                }
+            builder.addVersions(versionBuilder.build());
 
-                if (artifactId != null) {
-                    builder.setArtifactId(artifactId);
-                }
-                if (latestVersion != null) {
-                    builder.setLatestVersion(latestVersion);
-                }
+            if (latestVersion == null || schema.schemaVersion.compareTo(latestVersion) > 0) {
+                latestVersion = schema.schemaVersion;
+            }
+            if (schema.apicurioArtifactId != null) {
+                artifactId = schema.apicurioArtifactId;
+            }
+        }
 
-                return builder.build();
-            })
-            .onItem().ifNull().switchTo(() -> Uni.createFrom().item(
-                    GetModuleSchemaVersionsResponse.newBuilder()
-                            .setModuleName(serviceName)
-                            .build()));
+        if (artifactId != null) {
+            builder.setArtifactId(artifactId);
+        }
+        if (latestVersion != null) {
+            builder.setLatestVersion(latestVersion);
+        }
+
+        return builder.build();
     }
 }

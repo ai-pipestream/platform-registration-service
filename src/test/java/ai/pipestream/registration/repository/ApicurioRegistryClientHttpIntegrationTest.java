@@ -1,11 +1,8 @@
 package ai.pipestream.registration.repository;
 
 import io.quarkus.test.junit.QuarkusTest;
-import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
@@ -31,8 +28,7 @@ class ApicurioRegistryClientHttpIntegrationTest {
         // Act - Register the HTTP schema
         ApicurioRegistryClient.SchemaRegistrationResponse registrationResponse;
         try {
-            registrationResponse = apicurioClient.createOrUpdateSchemaWithArtifactBase(artifactBase, version, httpSchema)
-                .await().atMost(Duration.ofSeconds(10));
+            registrationResponse = apicurioClient.createOrUpdateSchemaWithArtifactBase(artifactBase, version, httpSchema);
         } catch (Exception e) {
             System.err.println("Registration failed with: " + e.getMessage());
             e.printStackTrace();
@@ -49,8 +45,7 @@ class ApicurioRegistryClientHttpIntegrationTest {
             registrationResponse.getArtifactId(), is(equalTo(artifactBase + "-config")));
 
         // Verify we can retrieve the schema using the artifact base (service name)
-        String retrievedSchema = apicurioClient.getSchema(artifactBase, version)
-            .await().atMost(Duration.ofSeconds(10));
+        String retrievedSchema = apicurioClient.getSchema(artifactBase, version);
 
         assertThat("Retrieved schema should match the registered schema",
             retrievedSchema, is(equalTo(httpSchema)));
@@ -66,8 +61,7 @@ class ApicurioRegistryClientHttpIntegrationTest {
 
         // Act - Register with pre-built artifact ID
         ApicurioRegistryClient.SchemaRegistrationResponse registrationResponse =
-            apicurioClient.createOrUpdateSchemaWithArtifactId(artifactId, version, httpSchema)
-                .await().atMost(Duration.ofSeconds(10));
+            apicurioClient.createOrUpdateSchemaWithArtifactId(artifactId, version, httpSchema);
 
         // Assert
         assertThat("Registration should succeed", registrationResponse, is(notNullValue()));
@@ -92,15 +86,13 @@ class ApicurioRegistryClientHttpIntegrationTest {
 
         // Act - Register YAML schema
         ApicurioRegistryClient.SchemaRegistrationResponse registrationResponse =
-            apicurioClient.createOrUpdateSchemaWithArtifactBase(artifactBase, version, yamlSchema)
-                .await().atMost(Duration.ofSeconds(10));
+            apicurioClient.createOrUpdateSchemaWithArtifactBase(artifactBase, version, yamlSchema);
 
         // Assert
         assertThat("YAML registration should succeed", registrationResponse, is(notNullValue()));
 
         // Verify retrieval using the artifact base
-        String retrievedSchema = apicurioClient.getSchema(artifactBase, version)
-            .await().atMost(Duration.ofSeconds(10));
+        String retrievedSchema = apicurioClient.getSchema(artifactBase, version);
 
         assertThat("Retrieved schema should match",
             retrievedSchema, is(equalTo(yamlSchema)));

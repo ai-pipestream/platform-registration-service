@@ -7,7 +7,6 @@ import ai.pipestream.registration.repository.ApicurioRegistryClient;
 import ai.pipestream.registration.repository.ModuleRepository;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
-import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,8 +50,7 @@ class SchemaRetrievalHandlerApicurioIntegrationTest {
     @Test
     void testApicurioHealthCheck() {
         // Verify that the Apicurio Registry is accessible
-        Boolean isHealthy = apicurioClient.isHealthy()
-            .await().indefinitely();
+        boolean isHealthy = apicurioClient.isHealthy();
 
         assertThat("Apicurio Registry should be healthy", isHealthy, is(true));
     }
@@ -66,8 +64,7 @@ class SchemaRetrievalHandlerApicurioIntegrationTest {
 
         // First, register the schema in Apicurio
         ApicurioRegistryClient.SchemaRegistrationResponse registrationResponse =
-            apicurioClient.createOrUpdateSchema(serviceName, version, jsonSchema)
-                .await().indefinitely();
+            apicurioClient.createOrUpdateSchema(serviceName, version, jsonSchema);
 
         assertThat("Registration should succeed", registrationResponse, is(notNullValue()));
         assertThat("Registration should have artifact ID",
@@ -76,8 +73,7 @@ class SchemaRetrievalHandlerApicurioIntegrationTest {
             registrationResponse.getGlobalId(), is(notNullValue()));
 
         // Now verify we can retrieve it directly from Apicurio
-        String retrievedSchema = apicurioClient.getSchema(serviceName, version)
-            .await().indefinitely();
+        String retrievedSchema = apicurioClient.getSchema(serviceName, version);
 
         assertThat("Retrieved schema should match", retrievedSchema, is(equalTo(jsonSchema)));
     }
@@ -91,26 +87,22 @@ class SchemaRetrievalHandlerApicurioIntegrationTest {
 
         // Register v1
         ApicurioRegistryClient.SchemaRegistrationResponse v1Response =
-            apicurioClient.createOrUpdateSchema(serviceName, "1.0.0", jsonSchemaV1)
-                .await().indefinitely();
+            apicurioClient.createOrUpdateSchema(serviceName, "1.0.0", jsonSchemaV1);
 
         assertThat("V1 registration should succeed", v1Response, is(notNullValue()));
 
         // Register v2
         ApicurioRegistryClient.SchemaRegistrationResponse v2Response =
-            apicurioClient.createOrUpdateSchema(serviceName, "2.0.0", jsonSchemaV2)
-                .await().indefinitely();
+            apicurioClient.createOrUpdateSchema(serviceName, "2.0.0", jsonSchemaV2);
 
         assertThat("V2 registration should succeed", v2Response, is(notNullValue()));
 
         // Verify we can retrieve v1
-        String retrievedV1 = apicurioClient.getSchema(serviceName, "1.0.0")
-            .await().indefinitely();
+        String retrievedV1 = apicurioClient.getSchema(serviceName, "1.0.0");
         assertThat("Retrieved V1 schema should match", retrievedV1, is(equalTo(jsonSchemaV1)));
 
         // Verify we can retrieve v2
-        String retrievedV2 = apicurioClient.getSchema(serviceName, "2.0.0")
-            .await().indefinitely();
+        String retrievedV2 = apicurioClient.getSchema(serviceName, "2.0.0");
         assertThat("Retrieved V2 schema should match", retrievedV2, is(equalTo(jsonSchemaV2)));
     }
 }

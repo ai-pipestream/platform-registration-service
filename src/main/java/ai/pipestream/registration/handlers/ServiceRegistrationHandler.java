@@ -6,15 +6,18 @@ import ai.pipestream.registration.consul.ConsulHealthChecker;
 import ai.pipestream.registration.consul.ConsulRegistrar;
 import ai.pipestream.registration.events.OpenSearchEventsProducer;
 import ai.pipestream.registration.repository.ApicurioRegistryClient;
-import io.smallrye.mutiny.Multi;
-import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.util.function.Consumer;
+
 /**
  * Handles service registration operations.
- * Updated to use the unified RegisterRequest from the new proto API.
+ *
+ * <p>Blocking — registration streams {@link RegistrationEvent}s to the supplied sink as each
+ * step completes. The external Consul APIs are Mutiny-only, so their {@code Uni} results are
+ * bridged to blocking with {@code .await().indefinitely()} on the caller's virtual thread.
  */
 @ApplicationScoped
 public class ServiceRegistrationHandler {
@@ -36,9 +39,9 @@ public class ServiceRegistrationHandler {
     /**
      * Register a service with streaming status updates.
      * Expects RegisterRequest with type=SERVICE_TYPE_SERVICE.
-     * Returns Multi&lt;RegistrationEvent&gt; which PlatformRegistrationService wraps in RegisterResponse.
+     * Emits each {@link RegistrationEvent} to {@code sink} as the flow progresses.
      */
-    public Multi<RegistrationEvent> registerService(RegisterRequest request) {
+    public void registerService(RegisterRequest request, Consumer<RegistrationEvent> sink) {
         Connectivity connectivity = request.getConnectivity();
         String host = connectivity.getAdvertisedHost();
         int port = connectivity.getAdvertisedPort();
@@ -46,124 +49,98 @@ public class ServiceRegistrationHandler {
             request.getVersion(), request.getName(), LOG, "register_request.version");
         String serviceId = ConsulRegistrar.generateServiceId(request.getName(), host, port);
 
-        return Multi.createFrom().emitter(emitter -> {
+        try {
             // Emit STARTED event
-            emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting service registration", serviceId));
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_STARTED, "Starting service registration", serviceId));
 
             // Validate request
             ValidationResult validation = RegisterRequestValidator.validateServiceRequest(request);
             if (!validation.valid()) {
-                RegistrationEvent failed = createEventWithError(serviceId, "Invalid service registration request", validation.reasonsAsString());
-                emitter.emit(failed);
-                emitter.complete();
+                sink.accept(createEventWithError(serviceId, "Invalid service registration request", validation.reasonsAsString()));
                 return;
             }
 
-            emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Service registration request validated", null));
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_VALIDATED, "Service registration request validated", null));
 
             // Register with Consul
-            consulRegistrar.registerService(request, serviceId)
-                .onItem().transformToUni(success -> {
-                    if (!success) {
-                        RegistrationEvent failed = createEventWithError(serviceId, "Failed to register with Consul", "Consul registration returned false");
-                        emitter.emit(failed);
-                        emitter.complete();
-                        return Uni.createFrom().voidItem();
-                    }
+            boolean consulSuccess = UniBlocking.await(consulRegistrar.registerService(request, serviceId));
+            if (!consulSuccess) {
+                sink.accept(createEventWithError(serviceId, "Failed to register with Consul", "Consul registration returned false"));
+                return;
+            }
 
-                    emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_REGISTERED, "Service registered with Consul", serviceId));
-                    emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_REGISTERED, "Service registered with Consul", serviceId));
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_HEALTH_CHECK_CONFIGURED, "Health check configured", null));
 
-                    // Wait for health check
-                    return healthChecker.waitForHealthy(request.getName(), serviceId)
-                        .onItem().transformToUni(healthy -> {
-                            if (!healthy) {
-                                // Service registered but never became healthy
-                                RegistrationEvent failed = createEventWithError(serviceId, "Service registered but failed health checks",
-                                    "Service did not become healthy within timeout period. Check service logs and connectivity.");
-                                emitter.emit(failed);
+            // Wait for health check
+            boolean healthy = UniBlocking.await(healthChecker.waitForHealthy(request.getName(), serviceId));
+            if (!healthy) {
+                // Service registered but never became healthy
+                sink.accept(createEventWithError(serviceId, "Service registered but failed health checks",
+                    "Service did not become healthy within timeout period. Check service logs and connectivity."));
 
-                                // Cleanup - unregister from Consul
-                                consulRegistrar.unregisterService(serviceId)
-                                    .subscribe().with(
-                                        cleanup -> LOG.debugf("Cleaned up unhealthy service registration: %s", serviceId),
-                                        error -> LOG.errorf(error, "Failed to cleanup unhealthy service: %s", serviceId)
-                                    );
+                // Cleanup - unregister from Consul
+                try {
+                    UniBlocking.await(consulRegistrar.unregisterService(serviceId));
+                    LOG.debugf("Cleaned up unhealthy service registration: %s", serviceId);
+                } catch (Exception error) {
+                    LOG.errorf(error, "Failed to cleanup unhealthy service: %s", serviceId);
+                }
+                return;
+            }
 
-                                emitter.complete();
-                                return Uni.createFrom().voidItem();
-                            }
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Service reported healthy by Consul", null));
 
-                            emitter.emit(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_CONSUL_HEALTHY, "Service reported healthy by Consul", null));
+            if (request.hasHttpSchema()) {
+                String schemaVersion = request.hasHttpSchemaVersion() && !request.getHttpSchemaVersion().isBlank()
+                    ? RegistrationVersionSanitizer.sanitize(
+                        request.getHttpSchemaVersion(), request.getName(), LOG, "register_request.http_schema_version")
+                    : sanitizedVersion;
+                String artifactBase = request.hasHttpSchemaArtifactId() && !request.getHttpSchemaArtifactId().isBlank()
+                    ? request.getHttpSchemaArtifactId()
+                    : request.getName() + "-http";
 
-                            Uni<Void> schemaRegistration = Uni.createFrom().voidItem();
-                            if (request.hasHttpSchema()) {
-                                String schemaVersion = request.hasHttpSchemaVersion() && !request.getHttpSchemaVersion().isBlank()
-                                    ? RegistrationVersionSanitizer.sanitize(
-                                        request.getHttpSchemaVersion(), request.getName(), LOG, "register_request.http_schema_version")
-                                    : sanitizedVersion;
-                                String artifactBase = request.hasHttpSchemaArtifactId() && !request.getHttpSchemaArtifactId().isBlank()
-                                    ? request.getHttpSchemaArtifactId()
-                                    : request.getName() + "-http";
+                try {
+                    apicurioClient.createOrUpdateSchemaWithArtifactBase(artifactBase, schemaVersion, request.getHttpSchema());
+                    sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED,
+                        "HTTP schema registered in Apicurio", null));
+                } catch (Exception error) {
+                    LOG.warnf(error, "Failed to register HTTP schema for service %s", request.getName());
+                }
+            }
 
-                                schemaRegistration = apicurioClient
-                                    .createOrUpdateSchemaWithArtifactBase(artifactBase, schemaVersion, request.getHttpSchema())
-                                    .invoke(result -> emitter.emit(
-                                        createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_APICURIO_REGISTERED,
-                                            "HTTP schema registered in Apicurio", null)))
-                                    .onFailure().invoke(error ->
-                                        LOG.warnf(error, "Failed to register HTTP schema for service %s", request.getName()))
-                                    .replaceWithVoid();
-                            }
+            sink.accept(createEvent(PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED,
+                "Service registration completed successfully", serviceId));
 
-                            return schemaRegistration.invoke(() -> {
-                                RegistrationEvent completed = createEvent(
-                                    PlatformEventType.PLATFORM_EVENT_TYPE_COMPLETED,
-                                    "Service registration completed successfully",
-                                    serviceId);
-                                emitter.emit(completed);
-
-                                // Emit to OpenSearch on success
-                                openSearchProducer.emitServiceRegistered(serviceId, request.getName(),
-                                    host, port, sanitizedVersion);
-                                emitter.complete();
-                            });
-                        });
-                })
-                .subscribe().with(
-                    result -> {}, // Success handled above
-                    error -> {
-                        LOG.error("Failed to register service", error);
-                        RegistrationEvent failed = createEventWithError(serviceId, "Registration failed", error.getMessage());
-                        emitter.emit(failed);
-                        emitter.complete();
-                    }
-                );
-        });
+            // Emit to OpenSearch on success
+            openSearchProducer.emitServiceRegistered(serviceId, request.getName(), host, port, sanitizedVersion);
+        } catch (Exception error) {
+            LOG.error("Failed to register service", error);
+            sink.accept(createEventWithError(serviceId, "Registration failed", error.getMessage()));
+        }
     }
 
     /**
-     * Unregister a service using the unified UnregisterRequest
+     * Unregister a service using the unified UnregisterRequest.
      */
-    public Uni<UnregisterResponse> unregisterService(UnregisterRequest request) {
+    public UnregisterResponse unregisterService(UnregisterRequest request) {
         String serviceId = ConsulRegistrar.generateServiceId(request.getName(), request.getHost(), request.getPort());
 
-        return consulRegistrar.unregisterService(serviceId)
-            .map(success -> {
-                UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
-                    .setSuccess(success)
-                    .setTimestamp(createTimestamp());
+        boolean success = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
 
-                if (success) {
-                    response.setMessage("Service unregistered successfully");
-                    // Emit to OpenSearch
-                    openSearchProducer.emitServiceUnregistered(serviceId, request.getName());
-                } else {
-                    response.setMessage("Failed to unregister service");
-                }
+        UnregisterResponse.Builder response = UnregisterResponse.newBuilder()
+            .setSuccess(success)
+            .setTimestamp(createTimestamp());
 
-                return response.build();
-            });
+        if (success) {
+            response.setMessage("Service unregistered successfully");
+            // Emit to OpenSearch
+            openSearchProducer.emitServiceUnregistered(serviceId, request.getName());
+        } else {
+            response.setMessage("Failed to unregister service");
+        }
+
+        return response.build();
     }
 
     private RegistrationEvent createEvent(PlatformEventType type, String message, String serviceId) {

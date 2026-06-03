@@ -1,11 +1,8 @@
 package ai.pipestream.registration.topics;
 
-import io.quarkus.virtual.threads.VirtualThreads;
-import io.smallrye.mutiny.Uni;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -27,10 +24,9 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Mirrors the engine's {@code KafkaTopicRegistrar.ensureProcessingTopic}
  * idempotent pattern (listTopics → skip if present → createTopics). The
- * blocking AdminClient work runs on Quarkus virtual threads so it composes
- * concurrently with the Apicurio schema-registration unis without
- * blocking the Vert.x event loop. Topic-ensure failure is isolated by
- * the caller — module registration must not fail because Kafka hiccuped.
+ * blocking AdminClient work runs directly on the caller's virtual thread,
+ * so it never pins the Vert.x event loop. Topic-ensure failure is isolated
+ * by the caller — module registration must not fail because Kafka hiccuped.
  */
 @ApplicationScoped
 public class ModuleTopicProvisioner {
@@ -48,10 +44,6 @@ public class ModuleTopicProvisioner {
 
     @ConfigProperty(name = "pipestream.kafka.default-replication-factor", defaultValue = "1")
     short defaultReplicationFactor;
-
-    @Inject
-    @VirtualThreads
-    java.util.concurrent.Executor virtualThreadExecutor;
 
     private AdminClient adminClient;
 
@@ -86,31 +78,28 @@ public class ModuleTopicProvisioner {
     }
 
     /**
-     * Idempotently ensure {@code pipestream.module.<moduleName>} exists,
-     * off the event loop. Completes normally whether the topic was
-     * created or already existed.
+     * Idempotently ensure {@code pipestream.module.<moduleName>} exists.
+     * Returns normally whether the topic was created or already existed.
+     * Blocking — call from a virtual thread.
      */
-    public Uni<Void> ensureModuleTopic(String moduleName) {
+    public void ensureModuleTopic(String moduleName) {
         String topic = moduleTopic(moduleName);
-        return Uni.createFrom().<Void>item(() -> {
-            try {
-                Set<String> existing = adminClient.listTopics().names().get(10, TimeUnit.SECONDS);
-                if (shouldCreate(existing, topic)) {
-                    adminClient.createTopics(List.of(
-                            new NewTopic(topic, defaultPartitions, defaultReplicationFactor)))
-                            .all().get(10, TimeUnit.SECONDS);
-                    LOG.infof("Created module-work topic %s (partitions=%d, replication=%d)",
-                            topic, defaultPartitions, defaultReplicationFactor);
-                } else {
-                    LOG.debugf("Module-work topic %s already exists; no-op", topic);
-                }
-            } catch (Exception e) {
-                // Rethrow so the caller's onFailure().recover isolates it —
-                // registration must not fail because topic-ensure hiccuped.
-                throw new RuntimeException(
-                        "ensureModuleTopic failed for " + topic + ": " + e.getMessage(), e);
+        try {
+            Set<String> existing = adminClient.listTopics().names().get(10, TimeUnit.SECONDS);
+            if (shouldCreate(existing, topic)) {
+                adminClient.createTopics(List.of(
+                        new NewTopic(topic, defaultPartitions, defaultReplicationFactor)))
+                        .all().get(10, TimeUnit.SECONDS);
+                LOG.infof("Created module-work topic %s (partitions=%d, replication=%d)",
+                        topic, defaultPartitions, defaultReplicationFactor);
+            } else {
+                LOG.debugf("Module-work topic %s already exists; no-op", topic);
             }
-            return null;
-        }).runSubscriptionOn(virtualThreadExecutor);
+        } catch (Exception e) {
+            // Rethrow so the caller isolates it — registration must not fail
+            // because topic-ensure hiccuped.
+            throw new RuntimeException(
+                    "ensureModuleTopic failed for " + topic + ": " + e.getMessage(), e);
+        }
     }
 }
