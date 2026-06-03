@@ -35,11 +35,9 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
 
     @Test
     void resolveService_withHttpEndpointsInRealConsul_returnsEndpoints() throws Exception {
-        // Arrange - Create a unique service name to avoid conflicts
         String serviceName = "test-consul-http-service-" + UUID.randomUUID().toString().substring(0, 8);
         String serviceId = serviceName + "-id";
 
-        // First, register a service with HTTP endpoints in real Consul
         var metadata = new java.util.HashMap<String, String>();
         metadata.put("http_endpoint_count", "2");
         metadata.put("http_endpoint_0_scheme", "https");
@@ -64,57 +62,45 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
                 .setPort(8080)
                 .setMeta(metadata);
 
-        consulClient.registerService(serviceOptions)
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(10, TimeUnit.SECONDS);
+        registerService(serviceOptions);
+        try {
+            ResolveServiceRequest request = ResolveServiceRequest.newBuilder()
+                    .setServiceName(serviceName)
+                    .build();
 
-        // Act - Resolve the service
-        ResolveServiceRequest request = ResolveServiceRequest.newBuilder()
-            .setServiceName(serviceName)
-            .build();
+            ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request);
 
-        ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request);
+            assertThat("Response should not be null", response, is(notNullValue()));
+            assertThat("Service name should match", response.getServiceName(), is(equalTo(serviceName)));
+            assertThat("Response should contain HTTP endpoints", response.getHttpEndpointsCount(), is(equalTo(2)));
 
-        // Assert
-        assertThat("Response should not be null", response, is(notNullValue()));
-        assertThat("Service name should match", response.getServiceName(), is(equalTo(serviceName)));
-        assertThat("Response should contain HTTP endpoints", response.getHttpEndpointsCount(), is(equalTo(2)));
+            HttpEndpoint endpoint0 = response.getHttpEndpoints(0);
+            assertThat("First endpoint scheme should match", endpoint0.getScheme(), is(equalTo("https")));
+            assertThat("First endpoint host should match", endpoint0.getHost(), is(equalTo("api.example.com")));
+            assertThat("First endpoint port should match", endpoint0.getPort(), is(equalTo(443)));
+            assertThat("First endpoint base path should match", endpoint0.getBasePath(), is(equalTo("/api/v1")));
+            assertThat("First endpoint health path should match", endpoint0.getHealthPath(), is(equalTo("/health")));
+            assertThat("First endpoint TLS should be enabled", endpoint0.getTlsEnabled(), is(true));
 
-        // Verify first endpoint
-        HttpEndpoint endpoint0 = response.getHttpEndpoints(0);
-        assertThat("First endpoint scheme should match", endpoint0.getScheme(), is(equalTo("https")));
-        assertThat("First endpoint host should match", endpoint0.getHost(), is(equalTo("api.example.com")));
-        assertThat("First endpoint port should match", endpoint0.getPort(), is(equalTo(443)));
-        assertThat("First endpoint base path should match", endpoint0.getBasePath(), is(equalTo("/api/v1")));
-        assertThat("First endpoint health path should match", endpoint0.getHealthPath(), is(equalTo("/health")));
-        assertThat("First endpoint TLS should be enabled", endpoint0.getTlsEnabled(), is(true));
+            HttpEndpoint endpoint1 = response.getHttpEndpoints(1);
+            assertThat("Second endpoint scheme should match", endpoint1.getScheme(), is(equalTo("http")));
+            assertThat("Second endpoint host should match", endpoint1.getHost(), is(equalTo("internal.example.com")));
+            assertThat("Second endpoint port should match", endpoint1.getPort(), is(equalTo(8080)));
+            assertThat("Second endpoint base path should match", endpoint1.getBasePath(), is(equalTo("/internal")));
+            assertThat("Second endpoint health path should match", endpoint1.getHealthPath(), is(equalTo("/status")));
+            assertThat("Second endpoint TLS should be disabled", endpoint1.getTlsEnabled(), is(false));
 
-        // Verify second endpoint
-        HttpEndpoint endpoint1 = response.getHttpEndpoints(1);
-        assertThat("Second endpoint scheme should match", endpoint1.getScheme(), is(equalTo("http")));
-        assertThat("Second endpoint host should match", endpoint1.getHost(), is(equalTo("internal.example.com")));
-        assertThat("Second endpoint port should match", endpoint1.getPort(), is(equalTo(8080)));
-        assertThat("Second endpoint base path should match", endpoint1.getBasePath(), is(equalTo("/internal")));
-        assertThat("Second endpoint health path should match", endpoint1.getHealthPath(), is(equalTo("/status")));
-        assertThat("Second endpoint TLS should be disabled", endpoint1.getTlsEnabled(), is(false));
-
-        // Verify schema metadata
-        assertThat("Should include HTTP schema artifact ID", response.hasHttpSchemaArtifactId(), is(true));
-        assertThat("HTTP schema artifact ID should match", response.getHttpSchemaArtifactId(), is(equalTo(serviceName + "-http")));
-        assertThat("Should include HTTP schema version", response.hasHttpSchemaVersion(), is(true));
-        assertThat("HTTP schema version should match", response.getHttpSchemaVersion(), is(equalTo("1.0.0")));
-
-        // Cleanup - deregister the service
-        consulClient.deregisterService(serviceId)
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(5, TimeUnit.SECONDS);
+            assertThat("Should include HTTP schema artifact ID", response.hasHttpSchemaArtifactId(), is(true));
+            assertThat("HTTP schema artifact ID should match", response.getHttpSchemaArtifactId(), is(equalTo(serviceName + "-http")));
+            assertThat("Should include HTTP schema version", response.hasHttpSchemaVersion(), is(true));
+            assertThat("HTTP schema version should match", response.getHttpSchemaVersion(), is(equalTo("1.0.0")));
+        } finally {
+            deregisterService(serviceId);
+        }
     }
 
     @Test
     void resolveService_withoutHttpEndpointsInRealConsul_returnsEmpty() throws Exception {
-        // Arrange - Register a service without HTTP endpoints
         String serviceName = "test-consul-no-http-service-" + UUID.randomUUID().toString().substring(0, 8);
         String serviceId = serviceName + "-id";
 
@@ -123,37 +109,27 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
                 .setName(serviceName)
                 .setAddress("localhost")
                 .setPort(8080);
-                // No HTTP metadata
 
-        consulClient.registerService(serviceOptions)
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(10, TimeUnit.SECONDS);
+        registerService(serviceOptions);
+        try {
+            ResolveServiceRequest request = ResolveServiceRequest.newBuilder()
+                    .setServiceName(serviceName)
+                    .build();
 
-        // Act
-        ResolveServiceRequest request = ResolveServiceRequest.newBuilder()
-            .setServiceName(serviceName)
-            .build();
+            ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request);
 
-        ResolveServiceResponse response = serviceDiscoveryHandler.resolveService(request);
-
-        // Assert
-        assertThat("Response should not be null", response, is(notNullValue()));
-        assertThat("Service name should match", response.getServiceName(), is(equalTo(serviceName)));
-        assertThat("Response should have no HTTP endpoints", response.getHttpEndpointsCount(), is(equalTo(0)));
-        assertThat("Should not have HTTP schema artifact ID", response.hasHttpSchemaArtifactId(), is(false));
-        assertThat("Should not have HTTP schema version", response.hasHttpSchemaVersion(), is(false));
-
-        // Cleanup
-        consulClient.deregisterService(serviceId)
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(5, TimeUnit.SECONDS);
+            assertThat("Response should not be null", response, is(notNullValue()));
+            assertThat("Service name should match", response.getServiceName(), is(equalTo(serviceName)));
+            assertThat("Response should have no HTTP endpoints", response.getHttpEndpointsCount(), is(equalTo(0)));
+            assertThat("Should not have HTTP schema artifact ID", response.hasHttpSchemaArtifactId(), is(false));
+            assertThat("Should not have HTTP schema version", response.hasHttpSchemaVersion(), is(false));
+        } finally {
+            deregisterService(serviceId);
+        }
     }
 
     @Test
     void listServices_withHttpEndpointsInRealConsul_includesEndpoints() throws Exception {
-        // Arrange - Register a service with HTTP endpoints
         String serviceName = "test-consul-list-service-" + UUID.randomUUID().toString().substring(0, 8);
         String serviceId = serviceName + "-id";
 
@@ -173,36 +149,46 @@ class ServiceDiscoveryHandlerConsulIntegrationTest {
                 .setPort(8080)
                 .setMeta(metadata);
 
+        registerService(serviceOptions);
+        try {
+            var listResponse = serviceDiscoveryHandler.listServices();
+
+            var ourService = listResponse.getServicesList().stream()
+                    .filter(service -> service.getServiceName().equals(serviceName))
+                    .findFirst();
+
+            assertThat("Our service should be in the list", ourService.isPresent(), is(true));
+
+            GetServiceResponse serviceResponse = ourService.get();
+            assertThat("Service should have HTTP endpoints", serviceResponse.getHttpEndpointsCount(), is(equalTo(1)));
+
+            HttpEndpoint endpoint = serviceResponse.getHttpEndpoints(0);
+            assertThat("Endpoint scheme should match", endpoint.getScheme(), is(equalTo("https")));
+            assertThat("Endpoint host should match", endpoint.getHost(), is(equalTo("api.example.com")));
+            assertThat("Endpoint port should match", endpoint.getPort(), is(equalTo(443)));
+            assertThat("Endpoint base path should match", endpoint.getBasePath(), is(equalTo("/api")));
+            assertThat("Endpoint health path should match", endpoint.getHealthPath(), is(equalTo("/health")));
+            assertThat("Endpoint TLS should be enabled", endpoint.getTlsEnabled(), is(true));
+        } finally {
+            deregisterService(serviceId);
+        }
+    }
+
+    private void registerService(ServiceOptions serviceOptions) throws Exception {
         consulClient.registerService(serviceOptions)
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(10, TimeUnit.SECONDS);
+    }
 
-        // Act - List all services
-        var listResponse = serviceDiscoveryHandler.listServices();
-
-        // Assert - Find our service in the list
-        var ourService = listResponse.getServicesList().stream()
-            .filter(service -> service.getServiceName().equals(serviceName))
-            .findFirst();
-
-        assertThat("Our service should be in the list", ourService.isPresent(), is(true));
-
-        GetServiceResponse serviceResponse = ourService.get();
-        assertThat("Service should have HTTP endpoints", serviceResponse.getHttpEndpointsCount(), is(equalTo(1)));
-
-        HttpEndpoint endpoint = serviceResponse.getHttpEndpoints(0);
-        assertThat("Endpoint scheme should match", endpoint.getScheme(), is(equalTo("https")));
-        assertThat("Endpoint host should match", endpoint.getHost(), is(equalTo("api.example.com")));
-        assertThat("Endpoint port should match", endpoint.getPort(), is(equalTo(443)));
-        assertThat("Endpoint base path should match", endpoint.getBasePath(), is(equalTo("/api")));
-        assertThat("Endpoint health path should match", endpoint.getHealthPath(), is(equalTo("/health")));
-        assertThat("Endpoint TLS should be enabled", endpoint.getTlsEnabled(), is(true));
-
-        // Cleanup
-        consulClient.deregisterService(serviceId)
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(5, TimeUnit.SECONDS);
+    private void deregisterService(String serviceId) {
+        try {
+            consulClient.deregisterService(serviceId)
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+        } catch (Exception ignored) {
+            // Best-effort cleanup so assertion failures do not leave stale Consul entries.
+        }
     }
 }
