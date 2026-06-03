@@ -79,10 +79,14 @@ public class ServiceRegistrationHandler {
                 sink.accept(createEventWithError(serviceId, "Service registered but failed health checks",
                     "Service did not become healthy within timeout period. Check service logs and connectivity."));
 
-                // Cleanup - unregister from Consul
+                // Cleanup - unregister from Consul (best effort)
                 try {
-                    UniBlocking.await(consulRegistrar.unregisterService(serviceId));
-                    LOG.debugf("Cleaned up unhealthy service registration: %s", serviceId);
+                    boolean cleaned = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
+                    if (cleaned) {
+                        LOG.debugf("Cleaned up unhealthy service registration: %s", serviceId);
+                    } else {
+                        LOG.errorf("Cleanup of unhealthy service registration returned false: %s", serviceId);
+                    }
                 } catch (Exception error) {
                     LOG.errorf(error, "Failed to cleanup unhealthy service: %s", serviceId);
                 }

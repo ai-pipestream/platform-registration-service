@@ -216,9 +216,13 @@ public class PlatformRegistrationService extends PlatformRegistrationServiceGrpc
         responseObserver.onCompleted();
     }
 
-    @SuppressWarnings("unchecked")
     private static <T> ServerCallStreamObserver<T> serverObserver(StreamObserver<T> observer) {
-        return (ServerCallStreamObserver<T>) observer;
+        if (observer instanceof ServerCallStreamObserver<T> serverObserver) {
+            return serverObserver;
+        }
+        throw new IllegalStateException(
+            "Expected a ServerCallStreamObserver for the watch stream but got "
+                + observer.getClass().getName() + "; cannot detect client cancellation");
     }
 
     private WatchServicesResponse toWatchServicesResponse(ListServicesResponse listResponse) {

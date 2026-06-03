@@ -196,8 +196,9 @@ public class ModuleRegistrationHandler {
     }
 
     private void rollbackConsulRegistration(String serviceId) {
-        // A failure here propagates to registerModule's handler, which emits the generic
-        // "Registration failed" terminal event — matching the original reactive flow.
+        // Matches the original reactive flow: a thrown exception propagates to registerModule's
+        // handler (→ generic "Registration failed"), while a false result is only logged and the
+        // caller continues to emit the accurate "Module failed health checks" event.
         boolean success = UniBlocking.await(consulRegistrar.unregisterService(serviceId));
         if (success) {
             LOG.infof("Rolled back Consul registration for %s", serviceId);

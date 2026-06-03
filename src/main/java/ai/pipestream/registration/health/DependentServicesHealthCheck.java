@@ -25,7 +25,9 @@ import java.util.concurrent.TimeUnit;
  * - Consul (service discovery backend)
  * - Apicurio Registry (schema storage)
  *
- * <p>All checks are blocking and bounded to ~2s each.
+ * <p>All checks are blocking. The database (JDBC query timeout) and Consul (future
+ * timeout) checks are bounded to ~2s; the Apicurio check relies on the registry
+ * client's own HTTP timeout rather than an explicit bound here.
  */
 @Readiness
 @ApplicationScoped

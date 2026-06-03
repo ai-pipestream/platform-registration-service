@@ -1,5 +1,6 @@
 package ai.pipestream.registration.entity;
 
+import io.quarkus.hibernate.orm.panache.Panache;
 import io.quarkus.test.TestTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
@@ -10,6 +11,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @QuarkusTest
 class ServiceModuleCrudTest {
+
+    /** Flush pending changes and detach everything, so the next read is a genuine DB round-trip. */
+    private static void flushAndClear() {
+        Panache.getEntityManager().flush();
+        Panache.getEntityManager().clear();
+    }
 
     @Test
     @TestTransaction
@@ -22,8 +29,9 @@ class ServiceModuleCrudTest {
         module.metadata.put("replicas", 1);
         final String id = module.serviceId;
 
-        // Persist (flush so @CreationTimestamp registeredAt is generated)
-        module.persistAndFlush();
+        // Persist, then force a DB-backed read
+        module.persist();
+        flushAndClear();
 
         // Read back (by id)
         ServiceModule found = ServiceModule.findById(id);
@@ -39,11 +47,12 @@ class ServiceModuleCrudTest {
         assertEquals("test", found.metadata.get("env"));
         assertEquals(1, ((Number) found.metadata.get("replicas")).intValue());
 
-        // Update
+        // Update, then force a DB-backed read
         found.version = "1.1.0";
         found.status = ServiceStatus.UNHEALTHY;
         found.metadata.put("tier", "dev");
         found.updateHeartbeat();
+        flushAndClear();
 
         // Verify the update
         ServiceModule updated = ServiceModule.findById(id);
@@ -53,9 +62,10 @@ class ServiceModuleCrudTest {
         assertEquals("dev", updated.metadata.get("tier"));
         assertTrue(updated.isHealthy(), "Heartbeat should be fresh after update");
 
-        // Delete
+        // Delete, then force a DB-backed read
         boolean deleted = ServiceModule.deleteById(id);
         assertTrue(deleted, "Expected deleteById to return true");
+        flushAndClear();
 
         assertNull(ServiceModule.findById(id), "Entity should be gone after delete");
     }
