@@ -46,6 +46,17 @@ public class ModuleRepository {
             String candidateId = ConfigSchema.generateSchemaId(serviceName, version);
             ConfigSchema existingSchema = ConfigSchema.findById(candidateId);
             if (existingSchema != null) {
+                // Same module@version re-registering with DIFFERENT content —
+                // routine for SNAPSHOT versions during development (module
+                // rebuilt, schema evolved). First-write-wins here meant a
+                // module could never update its schema without a version
+                // bump; the registry served the stale first registration
+                // forever. Update in place and re-sync to Apicurio.
+                if (!Objects.equals(existingSchema.jsonSchema, jsonSchema)) {
+                    LOG.infof("Config schema content changed for %s@%s — updating", serviceName, version);
+                    existingSchema.jsonSchema = jsonSchema;
+                    existingSchema.syncStatus = ConfigSchema.SyncStatus.PENDING;
+                }
                 schemaId = existingSchema.schemaId;
             } else {
                 ConfigSchema schema = ConfigSchema.create(serviceName, version, jsonSchema);
@@ -204,6 +215,22 @@ public class ModuleRepository {
      */
     public ConfigSchema findLatestSchemaByServiceName(String serviceName) {
         return ConfigSchema.find("serviceName = ?1 ORDER BY createdAt DESC", serviceName).firstResult();
+    }
+
+    /**
+     * Resolve the schema of the module's CURRENT registration: the instance
+     * with the freshest heartbeat wins. "Latest by createdAt" is wrong once
+     * historical version rows exist (e.g. a branch-suffixed snapshot version
+     * registered after the canonical one shadows it forever).
+     */
+    public ConfigSchema findCurrentSchemaByServiceName(String serviceName) {
+        ServiceModule module = ServiceModule
+                .find("serviceName = ?1 ORDER BY lastHeartbeat DESC", serviceName)
+                .firstResult();
+        if (module == null || module.configSchemaId == null) {
+            return null;
+        }
+        return ConfigSchema.findById(module.configSchemaId);
     }
 
     /**

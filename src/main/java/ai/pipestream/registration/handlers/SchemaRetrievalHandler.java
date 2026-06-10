@@ -70,6 +70,10 @@ public class SchemaRetrievalHandler {
 
     private ConfigSchema getSchemaFromDatabase(String serviceName, String version) {
         if (version == null) {
+            ConfigSchema current = moduleRepository.findCurrentSchemaByServiceName(serviceName);
+            if (current != null) {
+                return current;
+            }
             return moduleRepository.findLatestSchemaByServiceName(serviceName);
         }
         String schemaId = ConfigSchema.generateSchemaId(serviceName, version);
