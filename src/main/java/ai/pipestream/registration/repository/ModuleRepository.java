@@ -46,6 +46,17 @@ public class ModuleRepository {
             String candidateId = ConfigSchema.generateSchemaId(serviceName, version);
             ConfigSchema existingSchema = ConfigSchema.findById(candidateId);
             if (existingSchema != null) {
+                // Same module@version re-registering with DIFFERENT content —
+                // routine for SNAPSHOT versions during development (module
+                // rebuilt, schema evolved). First-write-wins here meant a
+                // module could never update its schema without a version
+                // bump; the registry served the stale first registration
+                // forever. Update in place and re-sync to Apicurio.
+                if (!Objects.equals(existingSchema.jsonSchema, jsonSchema)) {
+                    LOG.infof("Config schema content changed for %s@%s — updating", serviceName, version);
+                    existingSchema.jsonSchema = jsonSchema;
+                    existingSchema.syncStatus = ConfigSchema.SyncStatus.PENDING;
+                }
                 schemaId = existingSchema.schemaId;
             } else {
                 ConfigSchema schema = ConfigSchema.create(serviceName, version, jsonSchema);
