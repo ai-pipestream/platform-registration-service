@@ -218,6 +218,22 @@ public class ModuleRepository {
     }
 
     /**
+     * Resolve the schema of the module's CURRENT registration: the instance
+     * with the freshest heartbeat wins. "Latest by createdAt" is wrong once
+     * historical version rows exist (e.g. a branch-suffixed snapshot version
+     * registered after the canonical one shadows it forever).
+     */
+    public ConfigSchema findCurrentSchemaByServiceName(String serviceName) {
+        ServiceModule module = ServiceModule
+                .find("serviceName = ?1 ORDER BY lastHeartbeat DESC", serviceName)
+                .firstResult();
+        if (module == null || module.configSchemaId == null) {
+            return null;
+        }
+        return ConfigSchema.findById(module.configSchemaId);
+    }
+
+    /**
      * Get all schema versions for a service name, ordered by version descending.
      */
     public List<ConfigSchema> findSchemaVersionsByServiceName(String serviceName) {
