@@ -213,6 +213,29 @@ public class ModuleRepository {
     /**
      * Get latest schema for a service (most recently created).
      */
+    /**
+     * Upsert a NAMED schema artifact (recipe schema, uischema, ...) as a
+     * ConfigSchema row keyed by the artifact name — same update-on-change
+     * semantics as module config schemas, so SNAPSHOT re-registrations
+     * refresh content and mark PENDING for Apicurio re-sync.
+     */
+    @Transactional
+    public ConfigSchema upsertNamedArtifact(String artifactName, String version, String json) {
+        String candidateId = ConfigSchema.generateSchemaId(artifactName, version);
+        ConfigSchema existing = ConfigSchema.findById(candidateId);
+        if (existing != null) {
+            if (!Objects.equals(existing.jsonSchema, json)) {
+                LOG.infof("Named artifact content changed for %s@%s — updating", artifactName, version);
+                existing.jsonSchema = json;
+                existing.syncStatus = ConfigSchema.SyncStatus.PENDING;
+            }
+            return existing;
+        }
+        ConfigSchema schema = ConfigSchema.create(artifactName, version, json);
+        schema.persist();
+        return schema;
+    }
+
     public ConfigSchema findLatestSchemaByServiceName(String serviceName) {
         return ConfigSchema.find("serviceName = ?1 ORDER BY createdAt DESC", serviceName).firstResult();
     }

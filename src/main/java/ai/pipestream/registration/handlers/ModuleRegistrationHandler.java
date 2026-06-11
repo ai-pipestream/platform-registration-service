@@ -141,6 +141,27 @@ public class ModuleRegistrationHandler {
             configSchemaResult = null;
         }
 
+        // Extra named schema artifacts (recipe schemas, uischema pairs) —
+        // DB rows keyed by the artifact NAME (independent of the module's
+        // node schema, deliberately: the chunker node schema can swap shape
+        // without touching chunker-recipe) + best-effort Apicurio sync under
+        // the exact artifact id.
+        for (var artifact : moduleMetadata.getExtraSchemaArtifactsList()) {
+            if (artifact.getName().isBlank() || artifact.getJson().isBlank()) {
+                continue;
+            }
+            try {
+                moduleRepository.upsertNamedArtifact(artifact.getName(), version, artifact.getJson());
+                apicurioClient.createOrUpdateSchemaWithArtifactId(
+                        artifact.getName(), version, artifact.getJson());
+                LOG.infof("Registered extra schema artifact '%s' for %s:%s",
+                        artifact.getName(), moduleName, version);
+            } catch (Exception err) {
+                LOG.warnf(err, "Extra schema artifact '%s' registration failed for %s:%s — continuing",
+                        artifact.getName(), moduleName, version);
+            }
+        }
+
         // Fetch and register the module's OpenAPI spec, if it exposes one (best effort).
         String openApiSpec = fetchOpenApiSpec(host, port, request);
         if (openApiSpec != null && !openApiSpec.isBlank()) {

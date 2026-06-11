@@ -210,6 +210,14 @@ public class PlatformRegistrationService extends PlatformRegistrationServiceGrpc
     }
 
     @Override
+    public void getSchemaArtifact(ai.pipestream.platform.registration.v1.GetSchemaArtifactRequest request,
+                                  StreamObserver<ai.pipestream.platform.registration.v1.GetSchemaArtifactResponse> responseObserver) {
+        LOG.infof("Getting schema artifact: %s", request.getName());
+        responseObserver.onNext(schemaRetrievalHandler.getSchemaArtifact(request));
+        responseObserver.onCompleted();
+    }
+
+    @Override
     public void getModuleSchemaVersions(GetModuleSchemaVersionsRequest request, StreamObserver<GetModuleSchemaVersionsResponse> responseObserver) {
         LOG.infof("Listing schema versions for: %s", request.getModuleName());
         responseObserver.onNext(schemaRetrievalHandler.getModuleSchemaVersions(request));
