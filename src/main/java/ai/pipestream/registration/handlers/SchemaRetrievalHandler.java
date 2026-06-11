@@ -1,6 +1,8 @@
 package ai.pipestream.registration.handlers;
 
 import ai.pipestream.platform.registration.v1.GetModuleSchemaRequest;
+import ai.pipestream.platform.registration.v1.GetSchemaArtifactRequest;
+import ai.pipestream.platform.registration.v1.GetSchemaArtifactResponse;
 import ai.pipestream.platform.registration.v1.GetModuleSchemaVersionsRequest;
 import ai.pipestream.platform.registration.v1.GetModuleSchemaResponse;
 import ai.pipestream.platform.registration.v1.ModuleSchemaVersion;
@@ -65,6 +67,74 @@ public class SchemaRetrievalHandler {
             throw new StatusRuntimeException(
                     Status.INTERNAL.withDescription(
                             "Failed to retrieve schema for " + serviceName).withCause(error));
+        }
+    }
+
+    /**
+     * One door for every named schema artifact. Lookup order:
+     * <ol>
+     *   <li>DB ConfigSchema rows keyed by the artifact name (module config
+     *       schemas AND extra artifacts like {@code chunker-recipe} land
+     *       here at registration);</li>
+     *   <li>Apicurio platform schema group (artifacts synced from here, or
+     *       published by other services under the exact name);</li>
+     *   <li>Apicurio descriptor group ("default") — protobuf DESCRIPTOR
+     *       artifacts the proto pipeline publishes (e.g. "account-events"),
+     *       served as {@code application/x-protobuf}.</li>
+     * </ol>
+     */
+    public GetSchemaArtifactResponse getSchemaArtifact(GetSchemaArtifactRequest request) {
+        String name = request.getName();
+        String version = request.hasVersion() && !request.getVersion().isEmpty()
+                ? request.getVersion() : null;
+        if (name.isBlank()) {
+            throw new StatusRuntimeException(
+                    Status.INVALID_ARGUMENT.withDescription("artifact name is required"));
+        }
+        try {
+            ConfigSchema dbSchema = getSchemaFromDatabase(name, version);
+            if (dbSchema != null) {
+                return GetSchemaArtifactResponse.newBuilder()
+                        .setName(name)
+                        .setContent(com.google.protobuf.ByteString.copyFromUtf8(dbSchema.jsonSchema))
+                        .setContentType("application/json")
+                        .setVersion(dbSchema.schemaVersion == null ? "" : dbSchema.schemaVersion)
+                        .build();
+            }
+            // Platform schema group in Apicurio (exact artifact id).
+            try {
+                String json = apicurioClient.getSchemaByArtifactId(name, version);
+                if (json != null) {
+                    return GetSchemaArtifactResponse.newBuilder()
+                            .setName(name)
+                            .setContent(com.google.protobuf.ByteString.copyFromUtf8(json))
+                            .setContentType("application/json")
+                            .setVersion(version == null ? "" : version)
+                            .build();
+                }
+            } catch (ApicurioRegistryException ignored) {
+                // fall through to the descriptor group
+            }
+            // Protobuf descriptor group.
+            ApicurioRegistryClient.ArtifactContent descriptor =
+                    apicurioClient.getArtifactContentFromGroup("default", name, version);
+            if (descriptor != null) {
+                return GetSchemaArtifactResponse.newBuilder()
+                        .setName(name)
+                        .setContent(com.google.protobuf.ByteString.copyFrom(descriptor.bytes()))
+                        .setContentType(descriptor.contentType())
+                        .setVersion(descriptor.version())
+                        .build();
+            }
+            throw new StatusRuntimeException(Status.NOT_FOUND.withDescription(
+                    "No schema artifact named '" + name + "' in the platform store, schema group, "
+                            + "or descriptor group"));
+        } catch (StatusRuntimeException error) {
+            throw error;
+        } catch (Exception error) {
+            LOG.errorf(error, "Unexpected error retrieving artifact %s:%s", name, version);
+            throw new StatusRuntimeException(Status.INTERNAL.withDescription(
+                    "Failed to retrieve schema artifact " + name).withCause(error));
         }
     }
 

@@ -189,6 +189,42 @@ public class ApicurioRegistryClient {
         }
     }
 
+    /** Raw content + content-type of an artifact in an ARBITRARY group (e.g. protobuf descriptors in "default"). */
+    public record ArtifactContent(byte[] bytes, String contentType, String version) {}
+
+    /**
+     * Fetch any artifact's raw content from a specific group. Used by
+     * GetSchemaArtifact for protobuf descriptor artifacts, which live
+     * outside {@link #DEFAULT_GROUP} (the proto pipeline publishes them
+     * under the descriptor group, conventionally "default").
+     *
+     * @return the content, or null when the artifact doesn't exist there
+     */
+    public ArtifactContent getArtifactContentFromGroup(String groupId, String artifactId, String version) {
+        try {
+            String expr = (version != null && !version.isEmpty()) ? version : "branch=latest";
+            var meta = registryClient.groups().byGroupId(groupId)
+                    .artifacts().byArtifactId(artifactId)
+                    .versions().byVersionExpression(expr)
+                    .get();
+            var content = registryClient.groups().byGroupId(groupId)
+                    .artifacts().byArtifactId(artifactId)
+                    .versions().byVersionExpression(expr)
+                    .content().get();
+            if (content == null) {
+                return null;
+            }
+            byte[] bytes = content.readAllBytes();
+            String type = meta != null && "PROTOBUF".equalsIgnoreCase(meta.getArtifactType())
+                    ? "application/x-protobuf" : "application/json";
+            String servedVersion = meta != null && meta.getVersion() != null ? meta.getVersion() : "";
+            return new ArtifactContent(bytes, type, servedVersion);
+        } catch (Exception e) {
+            LOG.debugf("Artifact %s not found in group %s: %s", artifactId, groupId, e.getMessage());
+            return null;
+        }
+    }
+
     /**
      * Get schema by artifact ID (legacy naming, uses versionedArtifactId internally).
      */
