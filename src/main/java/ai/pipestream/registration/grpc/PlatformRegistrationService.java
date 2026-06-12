@@ -5,6 +5,7 @@ import ai.pipestream.registration.handlers.ServiceRegistrationHandler;
 import ai.pipestream.registration.handlers.ModuleRegistrationHandler;
 import ai.pipestream.registration.handlers.ServiceDiscoveryHandler;
 import ai.pipestream.registration.handlers.SchemaRetrievalHandler;
+import ai.pipestream.registration.handlers.TypeDescriptorHandler;
 import com.google.protobuf.Timestamp;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
@@ -43,6 +44,9 @@ public class PlatformRegistrationService extends PlatformRegistrationServiceGrpc
 
     @Inject
     SchemaRetrievalHandler schemaRetrievalHandler;
+
+    @Inject
+    TypeDescriptorHandler typeDescriptorHandler;
 
     @Override
     public void register(RegisterRequest request, StreamObserver<RegisterResponse> responseObserver) {
@@ -221,6 +225,21 @@ public class PlatformRegistrationService extends PlatformRegistrationServiceGrpc
     public void getModuleSchemaVersions(GetModuleSchemaVersionsRequest request, StreamObserver<GetModuleSchemaVersionsResponse> responseObserver) {
         LOG.infof("Listing schema versions for: %s", request.getModuleName());
         responseObserver.onNext(schemaRetrievalHandler.getModuleSchemaVersions(request));
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getTypeDescriptor(GetTypeDescriptorRequest request,
+                                  StreamObserver<GetTypeDescriptorResponse> responseObserver) {
+        LOG.infof("Resolving type descriptor for: %s", request.getTypeUrl());
+        responseObserver.onNext(typeDescriptorHandler.getTypeDescriptor(request));
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void listTypeDescriptors(ListTypeDescriptorsRequest request,
+                                    StreamObserver<ListTypeDescriptorsResponse> responseObserver) {
+        responseObserver.onNext(typeDescriptorHandler.listTypeDescriptors(request));
         responseObserver.onCompleted();
     }
 

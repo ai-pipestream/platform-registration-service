@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.maven.publish)
     id 'signing'
     alias(libs.plugins.nmcp.single)
+    id 'ai.pipestream.proto-toolchain'
 }
 
 // Registration + platform gRPC types come from pipestream-service-registration (and its
@@ -15,6 +16,64 @@ plugins {
 
 quarkus {
     quarkusBuildProperties.put("quarkus.grpc.codegen.enabled", "false")
+}
+
+// ============================================================
+// DESCRIPTOR SNAPSHOT — proto-toolchain in DESCRIPTORS-ONLY mode.
+//
+// The descriptor door (GetTypeDescriptor / ListTypeDescriptors) serves a
+// full-workspace FileDescriptorSet baked into the runtime classpath here.
+// Java codegen stays OFF (tasks disabled below): generated registration
+// types come from pipestream-service-registration — see header comment.
+// ============================================================
+pipestreamProtos {
+    sourceMode = 'git-proto-workspace'
+    gitRepo = 'https://github.com/ai-pipestream/pipestream-protos.git'
+    gitRef = 'main'
+
+    // Every workspace module from the protos repo buf.yaml — the descriptor
+    // snapshot must cover the whole platform, not just registration types.
+    modules {
+        register('admin')
+        register('common')
+        register('config')
+        register('connector-types')
+        register('design')
+        register('djl-serving')
+        register('engine')
+        register('intake')
+        register('opensearch')
+        register('parser')
+        register('pipeline-module')
+        register('quality')
+        register('registration')
+        register('repo')
+        register('schemamanager')
+        register('testing-harness')
+        register('ui-ux')
+        register('jdbc-connector')
+        register('module-worker')
+        register('s3-connector')
+        register('semantic-indexing')
+    }
+}
+
+// Descriptors only: never generate Java here (duplicate-class landmine).
+tasks.named('generateProtos') { enabled = false }
+tasks.named('prepareGenerators') { enabled = false }
+
+// Bake the workspace descriptor set + the plugin-emitted module manifest
+// (proto file -> workspace module; buf strips module roots from FDS file
+// names, so the mapping is only known at build time) into runtime resources.
+processResources {
+    dependsOn tasks.named('buildDescriptors')
+    from(layout.buildDirectory.file('descriptors/proto.desc')) {
+        into 'descriptors'
+        rename { 'pipestream-workspace.desc' }
+    }
+    from(layout.buildDirectory.file('descriptors/proto-modules.properties')) {
+        into 'descriptors'
+    }
 }
 
 scmVersion {
