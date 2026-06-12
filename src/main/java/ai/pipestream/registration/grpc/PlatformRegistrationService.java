@@ -6,6 +6,7 @@ import ai.pipestream.registration.handlers.ModuleRegistrationHandler;
 import ai.pipestream.registration.handlers.ServiceDiscoveryHandler;
 import ai.pipestream.registration.handlers.SchemaRetrievalHandler;
 import ai.pipestream.registration.handlers.TypeDescriptorHandler;
+import ai.pipestream.registration.handlers.TypeMetadataHandler;
 import com.google.protobuf.Timestamp;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
@@ -47,6 +48,9 @@ public class PlatformRegistrationService extends PlatformRegistrationServiceGrpc
 
     @Inject
     TypeDescriptorHandler typeDescriptorHandler;
+
+    @Inject
+    TypeMetadataHandler typeMetadataHandler;
 
     @Override
     public void register(RegisterRequest request, StreamObserver<RegisterResponse> responseObserver) {
@@ -240,6 +244,30 @@ public class PlatformRegistrationService extends PlatformRegistrationServiceGrpc
     public void listTypeDescriptors(ListTypeDescriptorsRequest request,
                                     StreamObserver<ListTypeDescriptorsResponse> responseObserver) {
         responseObserver.onNext(typeDescriptorHandler.listTypeDescriptors(request));
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getTypeMetadata(GetTypeMetadataRequest request,
+                                StreamObserver<GetTypeMetadataResponse> responseObserver) {
+        responseObserver.onNext(typeMetadataHandler.getTypeMetadata(request));
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void saveTypeMetadata(SaveTypeMetadataRequest request,
+                                 StreamObserver<SaveTypeMetadataResponse> responseObserver) {
+        LOG.infof("Saving type metadata: %s scope=%s fields=%d",
+                request.getMessageFullName(), request.getScope(), request.getFieldsCount());
+        responseObserver.onNext(typeMetadataHandler.saveTypeMetadata(request));
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void promoteTypeMetadata(PromoteTypeMetadataRequest request,
+                                    StreamObserver<PromoteTypeMetadataResponse> responseObserver) {
+        LOG.infof("Promoting type metadata: %s", request.getMessageFullName());
+        responseObserver.onNext(typeMetadataHandler.promoteTypeMetadata(request));
         responseObserver.onCompleted();
     }
 

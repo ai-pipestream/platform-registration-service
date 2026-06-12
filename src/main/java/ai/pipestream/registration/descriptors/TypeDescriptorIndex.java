@@ -1,6 +1,7 @@
 package ai.pipestream.registration.descriptors;
 
 import com.google.protobuf.DescriptorProtos.DescriptorProto;
+import com.google.protobuf.DescriptorProtos.FieldDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import jakarta.annotation.PostConstruct;
@@ -185,6 +186,155 @@ public class TypeDescriptorIndex {
             result.add(new TypeSummary(fullName, payload.group(), payload.version()));
         }
         return result;
+    }
+
+    /**
+     * Whether a dot-separated field path resolves against a type's schema.
+     * Each segment must name a field of the current message; intermediate
+     * segments must be message-typed (repeated message fields may be
+     * traversed — the path describes schema, not data); synthetic map-entry
+     * messages are not traversable (annotate the map field itself).
+     *
+     * @param messageFullName the root type
+     * @param fieldPath dot-separated field names ("content.text", "doc_id")
+     * @return true when every segment resolves
+     */
+    public boolean isValidFieldPath(String messageFullName, String fieldPath) {
+        if (fieldPath == null || fieldPath.isBlank()) {
+            return false;
+        }
+        DescriptorProto current = findMessage(messageFullName);
+        if (current == null) {
+            return false;
+        }
+        String[] segments = fieldPath.split("\\.");
+        for (int i = 0; i < segments.length; i++) {
+            FieldDescriptorProto field = findField(current, segments[i]);
+            if (field == null) {
+                return false;
+            }
+            if (i == segments.length - 1) {
+                return true;
+            }
+            if (field.getType() != FieldDescriptorProto.Type.TYPE_MESSAGE) {
+                return false;
+            }
+            DescriptorProto next = findMessage(stripLeadingDot(field.getTypeName()));
+            if (next == null || next.getOptions().getMapEntry()) {
+                return false;
+            }
+            current = next;
+        }
+        return false;
+    }
+
+    /**
+     * The BAKED metadata layer: each direct field's leading proto doc-comment
+     * (trailing as fallback), keyed by field name. Nested paths are served by
+     * fetching the nested type's own metadata — annotations are type-scoped
+     * and compose.
+     *
+     * @param messageFullName the type
+     * @return field name → trimmed comment; empty map for unknown types or
+     *         comment-less fields
+     */
+    public Map<String, String> bakedFieldDescriptions(String messageFullName) {
+        String definingFile = definingFileByType.get(messageFullName);
+        if (definingFile == null) {
+            return Map.of();
+        }
+        FileDescriptorProto file = filesByName.get(definingFile);
+        List<Integer> messagePath = pathToMessage(file, messageFullName);
+        DescriptorProto message = findMessage(messageFullName);
+        if (messagePath == null || message == null) {
+            return Map.of();
+        }
+
+        Map<List<Integer>, String> comments = new HashMap<>();
+        for (var location : file.getSourceCodeInfo().getLocationList()) {
+            String comment = !location.getLeadingComments().isBlank()
+                    ? location.getLeadingComments()
+                    : location.getTrailingComments();
+            if (!comment.isBlank()) {
+                comments.put(location.getPathList(), comment.strip());
+            }
+        }
+
+        Map<String, String> result = new HashMap<>();
+        for (int f = 0; f < message.getFieldCount(); f++) {
+            List<Integer> fieldPath = new ArrayList<>(messagePath);
+            fieldPath.add(DescriptorProto.FIELD_FIELD_NUMBER);
+            fieldPath.add(f);
+            String comment = comments.get(fieldPath);
+            if (comment != null) {
+                result.put(message.getField(f).getName(), comment);
+            }
+        }
+        return result;
+    }
+
+    /** Resolves a message's DescriptorProto by full name; null when unknown. */
+    private DescriptorProto findMessage(String messageFullName) {
+        String definingFile = definingFileByType.get(messageFullName);
+        if (definingFile == null) {
+            return null;
+        }
+        FileDescriptorProto file = filesByName.get(definingFile);
+        String packagePrefix = file.getPackage().isEmpty() ? "" : file.getPackage() + ".";
+        if (!messageFullName.startsWith(packagePrefix)) {
+            return null;
+        }
+        String[] names = messageFullName.substring(packagePrefix.length()).split("\\.");
+        DescriptorProto current = null;
+        List<DescriptorProto> level = file.getMessageTypeList();
+        for (String name : names) {
+            current = level.stream().filter(m -> m.getName().equals(name)).findFirst().orElse(null);
+            if (current == null) {
+                return null;
+            }
+            level = current.getNestedTypeList();
+        }
+        return current;
+    }
+
+    /** SourceCodeInfo path to a message declaration ([4, m] / [4, m, 3, n] ...). */
+    private List<Integer> pathToMessage(FileDescriptorProto file, String messageFullName) {
+        String packagePrefix = file.getPackage().isEmpty() ? "" : file.getPackage() + ".";
+        if (!messageFullName.startsWith(packagePrefix)) {
+            return null;
+        }
+        String[] names = messageFullName.substring(packagePrefix.length()).split("\\.");
+        List<Integer> path = new ArrayList<>();
+        List<DescriptorProto> level = file.getMessageTypeList();
+        for (int n = 0; n < names.length; n++) {
+            int index = -1;
+            for (int i = 0; i < level.size(); i++) {
+                if (level.get(i).getName().equals(names[n])) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0) {
+                return null;
+            }
+            path.add(n == 0
+                    ? FileDescriptorProto.MESSAGE_TYPE_FIELD_NUMBER
+                    : DescriptorProto.NESTED_TYPE_FIELD_NUMBER);
+            path.add(index);
+            level = level.get(index).getNestedTypeList();
+        }
+        return path;
+    }
+
+    private static FieldDescriptorProto findField(DescriptorProto message, String name) {
+        return message.getFieldList().stream()
+                .filter(f -> f.getName().equals(name))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static String stripLeadingDot(String typeName) {
+        return typeName.startsWith(".") ? typeName.substring(1) : typeName;
     }
 
     private TypeDescriptorPayload buildPayload(String messageFullName, String definingFile) {
